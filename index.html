@@ -1,1 +1,1409 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MBL 과학실험 계측기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  /* 실험 기록지에서 가져온 팔레트 */
+  --paper:#F6F7F3;      /* 기록지 바탕 */
+  --grid:#DFE4DA;       /* 모눈 */
+  --card:#FFFFFF;
+  --ink:#1B2A2E;        /* 본문 잉크 */
+  --ink-dim:#6B7B80;
+  --line:#D3DBD6;
+  --teal:#0E7C6B;       /* 주 강조 — 구리염 청록 */
+  --teal-soft:#E3F0ED;
+  --magenta:#C4306B;    /* 경고·정지 — 페놀프탈레인 */
+  --amber:#D98A26;      /* 주의 */
+  --indigo:#3B5BC4;
+  --ok:#2E8B57;
+  --tap:48px;
+  --r:12px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);
+  font-family:-apple-system,'Noto Sans KR','Malgun Gothic',sans-serif;font-size:15px;
+  overscroll-behavior:none;touch-action:manipulation}
+/* 신호 요소: 기록지 모눈 */
+body{background-image:linear-gradient(var(--grid) 1px,transparent 1px),
+                     linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+     background-size:22px 22px;background-position:-1px -1px}
+button,select,input{font-family:inherit;font-size:15px}
+button{min-height:var(--tap);border:1.5px solid var(--line);border-radius:var(--r);
+  background:var(--card);color:var(--ink);padding:0 16px;cursor:pointer;font-weight:600;
+  transition:transform .06s}
+button:active{transform:scale(.97)}
+button.primary{background:var(--teal);border-color:var(--teal);color:#fff}
+button.stop{background:var(--magenta);border-color:var(--magenta);color:#fff}
+button:disabled{opacity:.35}
+select,input[type=text],input[type=number]{min-height:var(--tap);background:var(--card);
+  color:var(--ink);border:1.5px solid var(--line);border-radius:10px;padding:0 10px}
+label{color:var(--ink-dim);font-size:13px}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.5px}
 
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ── 상단 바 ── */
+header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--card);
+  border-bottom:1.5px solid var(--line);flex-wrap:wrap}
+.brand{font-size:16px;font-weight:800;letter-spacing:-.3px;margin-right:4px}
+.brand span{color:var(--teal)}
+#dot{width:10px;height:10px;border-radius:50%;background:#C3CCC7}
+#dot.on{background:var(--ok);box-shadow:0 0 0 4px rgba(46,139,87,.18)}
+#devName{font-size:13px;color:var(--ink-dim);font-weight:700;letter-spacing:1px}
+.spacer{flex:1}
+/* 모드 탭 */
+#tabs{display:flex;gap:4px;background:var(--paper);border:1.5px solid var(--line);
+  border-radius:14px;padding:3px}
+#tabs button{min-height:40px;border:none;background:transparent;border-radius:11px;
+  padding:0 14px;font-weight:700;color:var(--ink-dim)}
+#tabs button.sel{background:var(--teal);color:#fff}
+
+/* ── 본문 ── */
+#main{display:flex;flex:1;min-height:0}
+#side{width:296px;background:var(--card);border-right:1.5px solid var(--line);
+  overflow-y:auto;padding:12px;transition:margin-left .22s}
+#side.hidden{margin-left:-296px}
+.view{flex:1;display:none;flex-direction:column;min-width:0;padding:12px;gap:10px;overflow-y:auto}
+.view.sel{display:flex}
+
+.sec{border:1.5px solid var(--line);border-radius:var(--r);padding:11px;margin-bottom:11px;background:var(--card)}
+.sec h3{margin:0 0 9px;font-size:13px;font-weight:800;color:var(--teal);
+  text-transform:uppercase;letter-spacing:.8px}
+.pinrow{padding:8px 0;border-bottom:1px dashed var(--line)}
+.pinrow:last-child{border-bottom:none}
+.r1{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.pinname{width:32px;font-weight:800;color:var(--indigo)}
+.r1 select{flex:1}
+.opts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.opts input{width:78px;min-height:40px}
+.chk{display:flex;align-items:center;gap:9px;min-height:44px;padding:0 2px;cursor:pointer}
+.chk input{width:22px;height:22px;accent-color:var(--teal)}
+.rowline{display:flex;align-items:center;gap:8px;margin:6px 0}
+.rowline input[type=range]{flex:1;min-height:44px;accent-color:var(--teal)}
+.hint{font-size:12px;color:var(--ink-dim);line-height:1.55;margin-top:6px}
+.warn{font-size:12px;color:var(--amber);font-weight:600;margin-top:5px}
+
+/* ── 현재값 ── */
+#vals{display:flex;gap:9px;flex-wrap:wrap}
+.vcard{background:var(--card);border:1.5px solid var(--line);border-radius:var(--r);
+  padding:8px 14px;min-width:118px;border-left:5px solid var(--teal)}
+.vcard .n{font-size:11px;color:var(--ink-dim);font-weight:700;letter-spacing:.3px}
+.vcard .v{font-size:27px;font-weight:800}
+.vcard .u{font-size:12px;color:var(--ink-dim);margin-left:3px;font-weight:600}
+
+#chartBox{flex:1;min-height:250px;background:var(--card);border:1.5px solid var(--line);
+  border-radius:var(--r);padding:10px;position:relative}
+#chartBox canvas{touch-action:none}
+#analyzeOut{position:absolute;top:14px;right:14px;background:rgba(255,255,255,.97);
+  border:1.5px solid var(--teal);border-radius:10px;padding:10px 13px;font-size:13px;
+  display:none;z-index:5;line-height:1.65;box-shadow:0 4px 16px rgba(0,0,0,.08)}
+#analyzeOut b{color:var(--teal)}
+
+#ctrl{display:flex;gap:9px;flex-wrap:wrap}
+#ctrl button{flex:1;min-width:104px;font-size:16px}
+#tableWrap{max-height:168px;overflow-y:auto;background:var(--card);
+  border:1.5px solid var(--line);border-radius:var(--r)}
+table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+th,td{padding:5px 9px;text-align:right;border-bottom:1px solid var(--line)}
+th{position:sticky;top:0;background:var(--paper);color:var(--ink-dim);font-weight:700}
+td:first-child,th:first-child{text-align:left}
+
+/* ── 게임 공통 ── */
+.gwrap{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+.gstage{flex:1;min-height:230px;background:var(--card);border:1.5px solid var(--line);
+  border-radius:var(--r);position:relative;overflow:hidden;display:flex;
+  align-items:center;justify-content:center}
+.gstage canvas{width:100%;height:100%;display:block}
+.gmsg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;text-align:center;gap:10px;padding:20px;pointer-events:none}
+.gmsg .big{font-size:46px;font-weight:900;letter-spacing:-2px}
+.gmsg .sub{font-size:16px;color:var(--ink-dim);font-weight:600}
+.gbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.gstat{background:var(--card);border:1.5px solid var(--line);border-radius:var(--r);
+  padding:7px 14px;min-width:96px}
+.gstat .n{font-size:11px;color:var(--ink-dim);font-weight:700}
+.gstat .v{font-size:23px;font-weight:800}
+#hrLog,#jpLog{max-height:132px;overflow-y:auto;background:var(--card);
+  border:1.5px solid var(--line);border-radius:var(--r);padding:4px}
+.logrow{display:flex;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:13px}
+.logrow:last-child{border-bottom:none}
+.logrow .idx{width:34px;color:var(--ink-dim);font-weight:700}
+.logrow .tag{font-weight:700;width:64px}
+.t-perfect{color:var(--magenta)} .t-good{color:var(--teal)}
+.t-weak{color:var(--amber)} .t-miss{color:var(--ink-dim)}
+
+/* ── 모션 패널 ── */
+#motionBox{display:flex;gap:14px;background:var(--card);border:1.5px solid var(--line);
+  border-radius:var(--r);padding:12px;min-height:186px}
+#motionCv{width:212px;height:162px;flex:0 0 auto}
+#motionInfo{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:7px}
+.mrow{display:flex;align-items:center;gap:10px}
+.mlabel{width:62px;font-size:12px;font-weight:800}
+.mbar{flex:1;height:16px;background:var(--paper);border:1.5px solid var(--line);
+  border-radius:8px;position:relative;overflow:hidden}
+.mbar::after{content:'';position:absolute;left:50%;top:0;bottom:0;width:1.5px;background:var(--line)}
+.mbar i{position:absolute;top:0;bottom:0;left:50%;width:0;background:currentColor;transition:none}
+#mbx{color:#C4306B} #mby{color:#0E7C6B} #mbz{color:#3B5BC4}
+.mval{width:64px;text-align:right;font-weight:800;font-size:15px}
+.mstate{font-size:13px;font-weight:800;padding:3px 11px;border-radius:20px;
+  background:var(--paper);border:1.5px solid var(--line);color:var(--ink-dim)}
+.mstate.free{background:#FFF4E0;border-color:var(--amber);color:var(--amber)}
+.mstate.hit{background:#FBE7EF;border-color:var(--magenta);color:var(--magenta)}
+.mstate.move{background:var(--teal-soft);border-color:var(--teal);color:var(--teal)}
+
+#noBle{display:none;padding:40px;text-align:center;line-height:1.9}
+#noBle h2{color:var(--magenta)}
+.notice{background:var(--teal-soft);border:1.5px solid var(--teal);border-radius:var(--r);
+  padding:10px 13px;font-size:13px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="btnMenu" style="min-width:50px;padding:0">☰</button>
+    <div class="brand">MBL <span>계측기</span></div>
+    <div id="dot"></div>
+    <span id="devName">미연결</span>
+    <button id="btnConn" class="primary">연결</button>
+    <button id="btnIdent" disabled>♪</button>
+    <input id="teamName" type="text" placeholder="조 이름" style="width:104px">
+    <div class="spacer"></div>
+    <div id="tabs">
+      <button data-view="measure" class="sel">측정</button>
+      <button data-view="hr">홈런더비</button>
+      <button data-view="jump">점프</button>
+    </div>
+  </header>
+
+  <div id="noBle">
+    <h2>이 브라우저에서는 사용할 수 없습니다</h2>
+    <p>안드로이드 태블릿의 <b>Chrome</b> 브라우저로 접속해 주세요.<br>
+       iPad(Safari)·Firefox는 Web Bluetooth를 지원하지 않습니다.</p>
+  </div>
+
+  <div id="main">
+    <!-- ═════ 설정 패널 ═════ -->
+    <aside id="side">
+      <div class="sec">
+        <h3>P1 ~ P4 핀</h3>
+        <div id="pinList"></div>
+        <div class="hint">핀에 꽂은 센서를 고르세요. 선택 즉시 기기에 전송됩니다.</div>
+      </div>
+      <div class="sec">
+        <h3>고정 채널</h3>
+        <label class="chk"><input type="checkbox" data-ch="dist">초음파 거리 (P13/P14)</label>
+        <label class="chk"><input type="checkbox" data-ch="prs">BMP280 기압</label>
+        <label class="chk"><input type="checkbox" data-ch="alt">고도 (기압에서 계산)</label>
+        <div class="rowline" id="p0row" style="display:none">
+          <label>해면기압</label><input type="number" id="seaP" value="1013.25" step="0.1" style="width:96px"><label>hPa</label>
+        </div>
+        <label class="chk"><input type="checkbox" data-ch="bt">BMP280 온도</label>
+        <label class="chk"><input type="checkbox" data-ch="lgt">내장 광센서</label>
+        <div class="warn" id="lgtWarn" style="display:none">광센서를 켜면 LED가 켜져 P3·P4 값이 부정확해집니다.</div>
+        <label class="chk"><input type="checkbox" data-ch="snd">내장 마이크</label>
+        <label class="chk"><input type="checkbox" data-ch="acc">가속도 (합)</label>
+        <label class="chk"><input type="checkbox" data-ch="accx">가속도 X축 (좌우)</label>
+        <label class="chk"><input type="checkbox" data-ch="accy">가속도 Y축 (앞뒤)</label>
+        <label class="chk"><input type="checkbox" data-ch="accz">가속도 Z축 (수직)</label>
+        <button id="btnAxyz" style="width:100%;margin-top:4px">3축 한번에 켜기</button>
+        <label class="chk"><input type="checkbox" data-ch="mag">자기장 (합)</label>
+      </div>
+      <div class="sec">
+        <h3>측정 주기</h3>
+        <div class="rowline">
+          <input type="range" id="rate" min="100" max="3000" step="100" value="500">
+          <span id="rateVal" class="num" style="width:62px;text-align:right;font-weight:700">500ms</span>
+        </div>
+        <div class="hint">DS18B20을 쓰면 1000ms 이상을 권장합니다. 초음파 운동 실험은 100~200ms.</div>
+      </div>
+      <div class="sec">
+        <h3>그래프 축</h3>
+        <div class="rowline">
+          <label style="width:34px">모드</label>
+          <select id="gMode" style="flex:1">
+            <option value="time">시간 — 채널</option>
+            <option value="xy">채널 — 채널 (X-Y)</option>
+          </select>
+        </div>
+        <div id="xyRow" style="display:none">
+          <div class="rowline"><label style="width:34px">X축</label><select id="xCh" style="flex:1"></select></div>
+          <div class="rowline"><label style="width:34px">Y축</label><select id="yCh" style="flex:1"></select></div>
+        </div>
+        <label class="chk"><input type="checkbox" id="chkAnalyze">구간 분석 (그래프를 두 번 탭)</label>
+      </div>
+    </aside>
+
+    <!-- ═════ 측정 화면 ═════ -->
+    <div class="view sel" id="v_measure">
+      <div id="vals"></div>
+      <div id="motionBox" style="display:none">
+        <canvas id="motionCv"></canvas>
+        <div id="motionInfo">
+          <div class="mrow"><span class="mlabel" style="color:#C4306B">X 좌우</span>
+            <div class="mbar"><i id="mbx"></i></div><span class="mval num" id="mvx">0</span></div>
+          <div class="mrow"><span class="mlabel" style="color:#0E7C6B">Y 앞뒤</span>
+            <div class="mbar"><i id="mby"></i></div><span class="mval num" id="mvy">0</span></div>
+          <div class="mrow"><span class="mlabel" style="color:#3B5BC4">Z 수직</span>
+            <div class="mbar"><i id="mbz"></i></div><span class="mval num" id="mvz">0</span></div>
+          <div class="mrow" style="margin-top:6px">
+            <span class="mlabel">합</span>
+            <span class="mval num" id="mvs" style="font-size:22px;width:auto">0</span>
+            <span class="mstate" id="mstate">정지</span>
+          </div>
+          <div class="hint" id="mtilt">기울기 —</div>
+        </div>
+      </div>
+      <div id="chartBox"><canvas id="chart"></canvas><div id="analyzeOut"></div></div>
+      <div id="ctrl">
+        <button id="btnStart" class="primary" disabled>측정 시작</button>
+        <button id="btnMark" disabled>마커</button>
+        <button id="btnReset" disabled>리셋</button>
+        <button id="btnMotion">모션 보기</button>
+        <button id="btnCsv">CSV 저장</button>
+      </div>
+      <div id="tableWrap"><table id="dataTable"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- ═════ 홈런더비 ═════ -->
+    <div class="view" id="v_hr">
+      <div class="gwrap">
+        <div class="notice">마이크로비트를 손목 스트랩에 끼우고 배트처럼 잡으세요. 주변에 사람이 없는지 확인하고 휘두릅니다.</div>
+        <div class="gbar">
+          <button id="hrStart" class="primary" disabled>경기 시작</button>
+          <button id="hrMute" style="min-width:52px;padding:0">🔊</button>
+          <div class="gstat"><div class="n">투구</div><div class="v num"><span id="hrPitch">0</span>/10</div></div>
+          <div class="gstat"><div class="n">총 비거리</div><div class="v num"><span id="hrTotal">0</span>m</div></div>
+          <div class="gstat"><div class="n">홈런</div><div class="v num" id="hrHomer">0</div></div>
+          <div class="gstat"><div class="n">안타</div><div class="v num" id="hrHit">0</div></div>
+          <div class="gstat"><div class="n">최장 타구</div><div class="v num"><span id="hrBest">0</span>m</div></div>
+        </div>
+        <div class="gstage"><canvas id="hrCanvas"></canvas><div class="gmsg" id="hrMsg">
+          <div class="big">홈런더비</div><div class="sub">기기를 연결하고 경기 시작을 누르세요</div></div></div>
+        <div id="hrLog"></div>
+      </div>
+    </div>
+
+    <!-- ═════ 점프 ═════ -->
+    <div class="view" id="v_jump">
+      <div class="gwrap">
+        <div class="notice">마이크로비트를 손에 꼭 쥐거나 허리에 고정하고 제자리에서 뛰세요. 기기를 위로 던지면 무효 처리됩니다.</div>
+        <div class="gbar">
+          <button id="jpStart" class="primary" disabled>측정 시작</button>
+          <div class="gstat"><div class="n">시도</div><div class="v num" id="jpTry">0</div></div>
+          <div class="gstat"><div class="n">최근 높이</div><div class="v num"><span id="jpLast">0</span>cm</div></div>
+          <div class="gstat"><div class="n">체공시간</div><div class="v num"><span id="jpAir">0</span>s</div></div>
+          <div class="gstat"><div class="n">최고 기록</div><div class="v num"><span id="jpBest">0</span>cm</div></div>
+        </div>
+        <div class="gstage"><canvas id="jpCanvas"></canvas><div class="gmsg" id="jpMsg">
+          <div class="big">점프 높이</div><div class="sub">기기를 연결하고 측정 시작을 누르세요</div></div></div>
+        <div id="jpLog"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   MBL 과학실험 계측기 웹앱 v1.1
+   micro:bit 펌웨어 v1.1 (BLE UART) 대응
+   데이터: D,ms,P1,P2,P3,P4,dist,prs,bt,lgt,snd,acc,mag,accMax,freeMs,swingT,swingPeak
+   ============================================================ */
+
+// ─────────── 채널 정의 (idx = 수신 배열 인덱스) ───────────
+const CH=[
+  {id:'p1',name:'P1',idx:2,pin:true},
+  {id:'p2',name:'P2',idx:3,pin:true},
+  {id:'p3',name:'P3',idx:4,pin:true},
+  {id:'p4',name:'P4',idx:5,pin:true},
+  {id:'dist',name:'거리',idx:6,unit:'cm'},
+  {id:'prs', name:'기압',idx:7,unit:'hPa'},
+  {id:'bt',  name:'BMP 온도',idx:8,unit:'°C'},
+  {id:'alt', name:'고도',derived:true,unit:'m'},
+  {id:'lgt', name:'광센서',idx:9,unit:''},
+  {id:'snd', name:'소리',idx:10,unit:''},
+  {id:'acc', name:'가속도',idx:11,unit:'mg'},
+  {id:'mag', name:'자기장',idx:12,unit:'µT'},
+  {id:'accx',name:'가속도 X',idx:17,unit:'mg'},
+  {id:'accy',name:'가속도 Y',idx:18,unit:'mg'},
+  {id:'accz',name:'가속도 Z',idx:19,unit:'mg'},
+];
+const IDX_ACCMAX=13, IDX_FREEMS=14, IDX_SWINGT=15, IDX_SWINGPEAK=16;
+const COLORS=['#0E7C6B','#C4306B','#D98A26','#3B5BC4','#2E8B57','#8B5CF6','#0891B2','#B45309','#DB2777','#059669','#4F46E5','#CA8A04'];
+
+// P1~P4 프로파일
+const PROFILES={
+  A:[
+    {id:'raw', name:'원시값 (0~1023)',     unit:'',  conv:(r,o)=>r},
+    {id:'volt',name:'전압 — 점퍼선 직결',   unit:'V', conv:(r,o)=>r/1023*(o.vref||3.3)},
+    {id:'vmod',name:'전압 감지 모듈 (5:1)', unit:'V', conv:(r,o)=>r/1023*(o.vref||3.3)*5},
+    {id:'amp', name:'전류 — 션트 저항',     unit:'A', conv:(r,o)=>r/1023*(o.vref||3.3)/(o.shunt||1)},
+    {id:'cal2',name:'2점 보정',            unit:'',  conv:(r,o)=>{
+        const x1=o.x1??0,y1=o.y1??0,x2=o.x2??1023,y2=o.y2??100;
+        return x2===x1?NaN:y1+(r-x1)*(y2-y1)/(x2-x1);}},
+    {id:'lin', name:'사용자 수식  y = ax+b', unit:'', conv:(r,o)=>(o.a??1)*r+(o.b??0)},
+  ],
+  T:[{id:'ds',name:'DS18B20 온도',unit:'°C',conv:(r,o)=>r+(o.off||0)}]
+};
+
+// ─────────── 상태 ───────────
+const S={
+  dev:null,wc:null,nc:null,connected:false,devName:'',
+  running:false,buf:'',view:'measure',
+  pins:[{mode:'X',profile:'raw',opts:{}},{mode:'X',profile:'raw',opts:{}},
+        {mode:'X',profile:'raw',opts:{}},{mode:'X',profile:'raw',opts:{}}],
+  fixed:{dist:false,prs:false,bt:false,alt:false,lgt:false,snd:false,acc:false,mag:false,
+         accx:false,accy:false,accz:false},
+  motion:false,last:null,motionRaf:0,
+  rateMs:500,data:[],markers:[],maxRows:20000,
+  gMode:'time',xCh:'p1',yCh:'p2',analyze:false,aPts:[],
+  wakeLock:null,clockOffset:0,   // 기기시각 = 웹시각 + clockOffset
+  pingSent:0,pingCb:null,
+};
+const $=id=>document.getElementById(id);
+const enc=new TextEncoder(),dec=new TextDecoder();
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const round4=v=>Math.round(v*1e4)/1e4;
+const fmt=v=>Math.abs(v)>=100?v.toFixed(1):v.toFixed(2);
+
+// ─────────── BLE ───────────
+const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+async function connect(){
+  try{
+    const dev=await navigator.bluetooth.requestDevice({
+      filters:[{namePrefix:'BBC micro:bit'}],optionalServices:[SVC]});
+    dev.addEventListener('gattserverdisconnected',onDisc);
+    const svc=await (await dev.gatt.connect()).getPrimaryService(SVC);
+    for(const c of await svc.getCharacteristics()){
+      if(c.properties.notify) S.nc=c;
+      if(c.properties.write||c.properties.writeWithoutResponse) S.wc=c;
+    }
+    if(!S.nc||!S.wc) throw new Error('UART 특성을 찾지 못했습니다');
+    await S.nc.startNotifications();
+    S.nc.addEventListener('characteristicvaluechanged',onData);
+    S.dev=dev; S.connected=true;
+    S.devName=(dev.name||'').replace('BBC micro:bit','').trim()||'연결됨';
+    setConnUI(true);
+    await sleep(300); await pushAll(); send('?');
+  }catch(e){ if(e.name!=='NotFoundError') alert('연결 실패: '+e.message); }
+}
+function onDisc(){
+  S.connected=false;S.running=false;S.wc=null;S.nc=null;
+  setConnUI(false);setRunUI(false);
+  HR.stop(); JP.stop();
+}
+const disconnect=()=>{ if(S.dev?.gatt.connected) S.dev.gatt.disconnect(); };
+async function send(l){ if(!S.wc)return; try{await S.wc.writeValue(enc.encode(l+'\n'));}catch(e){} }
+
+async function pushAll(){
+  for(let i=0;i<4;i++){ await send(`M,${i+1},${S.pins[i].mode}`); await sleep(55); }
+  for(const [c,on] of Object.entries(S.fixed)){
+    if(c==='alt')continue; await send(`E,${c},${on?1:0}`); await sleep(55);
+  }
+  await send(`R,${S.rateMs}`);
+}
+
+// 시계 동기화: 핑 왕복의 절반을 보정
+function syncClock(){
+  return new Promise(res=>{
+    S.pingSent=performance.now();
+    S.pingCb=devT=>{
+      const rtt=performance.now()-S.pingSent;
+      S.clockOffset=devT-(S.pingSent+rtt/2);
+      res();
+    };
+    send('P');
+    setTimeout(()=>{ if(S.pingCb){S.pingCb=null;res();} },800);
+  });
+}
+const toDev=webT=>webT+S.clockOffset;   // 웹 시각 → 기기 시각
+
+// ─────────── 수신 파싱 ───────────
+function onData(ev){
+  S.buf+=dec.decode(ev.target.value);
+  let i;
+  while((i=S.buf.indexOf('\n'))>=0){
+    const l=S.buf.slice(0,i).trim(); S.buf=S.buf.slice(i+1);
+    if(l) parseLine(l);
+  }
+  if(S.buf.length>600) S.buf='';
+}
+function parseLine(line){
+  const f=line.split(',');
+  if(f[0]==='PONG'){ const t=parseFloat(f[1]); if(S.pingCb&&!isNaN(t)){const cb=S.pingCb;S.pingCb=null;cb(t);} return; }
+  if(f[0]==='I'){ if(f[3]) $('devName').textContent=f[3]; return; }
+  if(f[0]!=='D') return;
+
+  const ms=parseInt(f[1]); if(isNaN(ms)) return;
+
+  // 게임 모드 처리
+  if(HR.active){ HR.feed(f,ms); return; }
+  if(JP.active){ JP.feed(f,ms); return; }
+  if(!S.running) return;
+
+  const row={t:ms/1000,marker:''};
+  for(const ch of CH){
+    if(ch.derived) continue;
+    const raw=f[ch.idx];
+    if(raw===undefined||raw===''){ row[ch.id]=null; continue; }
+    if(raw==='ERR'){ row[ch.id]=NaN; continue; }
+    const n=parseFloat(raw); row[ch.id]=isNaN(n)?null:n;
+  }
+  if(S.fixed.alt&&row.prs!=null&&!isNaN(row.prs)){
+    const p0=parseFloat($('seaP').value)||1013.25;
+    row.alt=Math.round(44330*(1-Math.pow(row.prs/p0,0.1903))*10)/10;
+  } else row.alt=null;
+  for(let i=0;i<4;i++){
+    const id='p'+(i+1),p=S.pins[i];
+    if(row[id]==null||isNaN(row[id])) continue;
+    if(p.mode==='A'){
+      const pr=PROFILES.A.find(x=>x.id===p.profile)||PROFILES.A[0];
+      row[id]=round4(pr.conv(row[id],p.opts));
+    } else if(p.mode==='T') row[id]=round4(row[id]+(p.opts.off||0));
+  }
+  if(S.data.length>=S.maxRows){
+    if(S.data.length===S.maxRows){S.data.push(row);alert('데이터 상한('+S.maxRows+'행)에 도달했습니다. CSV로 저장 후 리셋하세요.');}
+    return;
+  }
+  S.last=row;
+  S.data.push(row); updateVals(row); pushChart(row); pushTable(row);
+}
+
+// ─────────── 채널 목록 ───────────
+function activeChannels(){
+  const out=[];
+  for(let i=0;i<4;i++){
+    const p=S.pins[i]; if(p.mode==='X') continue;
+    let unit='°C';
+    if(p.mode==='A') unit=(PROFILES.A.find(x=>x.id===p.profile)||{}).unit||'';
+    out.push({id:'p'+(i+1),name:pinLabel(i),unit});
+  }
+  for(const ch of CH){ if(!ch.pin&&S.fixed[ch.id]) out.push({id:ch.id,name:ch.name,unit:ch.unit||''}); }
+  return out;
+}
+function pinLabel(i){
+  const p=S.pins[i];
+  if(p.mode==='T') return `P${i+1} 온도`;
+  const s={raw:'원시값',volt:'전압',vmod:'전압',amp:'전류',cal2:'보정값',lin:'값'};
+  return `P${i+1} ${s[p.profile]||''}`;
+}
+
+// ─────────── 현재값 ───────────
+function rebuildVals(){
+  const b=$('vals'); b.innerHTML='';
+  activeChannels().forEach((ch,i)=>{
+    const d=document.createElement('div');
+    d.className='vcard'; d.id='vc_'+ch.id;
+    d.style.borderLeftColor=COLORS[i%COLORS.length];
+    d.innerHTML=`<div class="n">${ch.name}</div><div><span class="v num">–</span><span class="u">${ch.unit}</span></div>`;
+    b.appendChild(d);
+  });
+}
+function updateVals(row){
+  for(const ch of activeChannels()){
+    const el=document.querySelector('#vc_'+ch.id+' .v'); if(!el)continue;
+    const v=row[ch.id];
+    el.textContent=v==null?'–':isNaN(v)?'오류':fmt(v);
+    el.style.color=isNaN(v)?'var(--magenta)':'';
+  }
+}
+
+// ─────────── 그래프 ───────────
+let chart=null;
+const markerPlugin={id:'mk',afterDraw(c){
+  if(S.gMode!=='time')return;
+  const {ctx,chartArea:a,scales}=c;
+  for(const m of S.markers){
+    const x=scales.x.getPixelForValue(m.t);
+    if(x<a.left||x>a.right)continue;
+    ctx.save();ctx.strokeStyle='#D98A26';ctx.setLineDash([5,4]);ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(x,a.top);ctx.lineTo(x,a.bottom);ctx.stroke();
+    ctx.fillStyle='#D98A26';ctx.font='700 11px sans-serif';ctx.fillText(m.label,x+4,a.top+12);
+    ctx.restore();
+  }
+  if(S.aPts.length){
+    ctx.save();
+    if(S.aPts.length===2){
+      const x1=scales.x.getPixelForValue(S.aPts[0]),x2=scales.x.getPixelForValue(S.aPts[1]);
+      ctx.fillStyle='rgba(14,124,107,.10)';
+      ctx.fillRect(Math.min(x1,x2),a.top,Math.abs(x2-x1),a.bottom-a.top);
+    }
+    ctx.strokeStyle='#0E7C6B';ctx.lineWidth=2;
+    for(const t of S.aPts){const x=scales.x.getPixelForValue(t);
+      ctx.beginPath();ctx.moveTo(x,a.top);ctx.lineTo(x,a.bottom);ctx.stroke();}
+    ctx.restore();
+  }
+}};
+function rebuildChart(){
+  if(chart){chart.destroy();chart=null;}
+  const chs=activeChannels(),ctx=$('chart').getContext('2d');
+  Chart.defaults.color='#6B7B80'; Chart.defaults.borderColor='#DFE4DA';
+  Chart.defaults.font.family="'Noto Sans KR',sans-serif";
+  if(S.gMode==='time'){
+    chart=new Chart(ctx,{type:'line',
+      data:{datasets:chs.map((ch,i)=>({
+        label:ch.name+(ch.unit?` (${ch.unit})`:''),
+        data:S.data.map(r=>({x:r.t,y:r[ch.id]})),
+        borderColor:COLORS[i%COLORS.length],backgroundColor:COLORS[i%COLORS.length],
+        pointRadius:0,borderWidth:2.2,spanGaps:true,tension:.15,parsing:false}))},
+      options:{animation:false,responsive:true,maintainAspectRatio:false,
+        interaction:{mode:'nearest',intersect:false},
+        scales:{x:{type:'linear',title:{display:true,text:'시간 (s)'}},y:{type:'linear'}},
+        plugins:{legend:{labels:{boxWidth:14,font:{size:12,weight:'600'}}}}},
+      plugins:[markerPlugin]});
+  }else{
+    const xc=chs.find(c=>c.id===S.xCh),yc=chs.find(c=>c.id===S.yCh);
+    chart=new Chart(ctx,{type:'scatter',
+      data:{datasets:[{label:`${yc?.name||''} — ${xc?.name||''}`,
+        data:S.data.filter(r=>ok(r[S.xCh])&&ok(r[S.yCh])).map(r=>({x:r[S.xCh],y:r[S.yCh]})),
+        borderColor:COLORS[0],backgroundColor:COLORS[0],pointRadius:3.5,showLine:false,parsing:false}]},
+      options:{animation:false,responsive:true,maintainAspectRatio:false,
+        scales:{x:{type:'linear',title:{display:true,text:(xc?.name||'')+(xc?.unit?` (${xc.unit})`:'')}},
+                y:{type:'linear',title:{display:true,text:(yc?.name||'')+(yc?.unit?` (${yc.unit})`:'')}}},
+        plugins:{legend:{display:true}}}});
+  }
+}
+const ok=v=>v!=null&&!isNaN(v);
+function pushChart(row){
+  if(!chart)return;
+  if(S.gMode==='time') activeChannels().forEach((ch,i)=>chart.data.datasets[i]?.data.push({x:row.t,y:row[ch.id]}));
+  else if(ok(row[S.xCh])&&ok(row[S.yCh])) chart.data.datasets[0].data.push({x:row[S.xCh],y:row[S.yCh]});
+  chart.update('none');
+}
+$('chart').addEventListener('click',ev=>{
+  if(!S.analyze||S.gMode!=='time'||!chart)return;
+  const r=$('chart').getBoundingClientRect();
+  const t=chart.scales.x.getValueForPixel(ev.clientX-r.left);
+  if(t==null)return;
+  if(S.aPts.length>=2)S.aPts=[];
+  S.aPts.push(t);
+  if(S.aPts.length===2)showAnalysis(); else $('analyzeOut').style.display='none';
+  chart.update('none');
+});
+function showAnalysis(){
+  const [a,b]=[...S.aPts].sort((p,q)=>p-q);
+  let h=`<b>구간 분석</b> ${a.toFixed(2)}s ~ ${b.toFixed(2)}s<br>`;
+  for(const ch of activeChannels()){
+    const pts=S.data.filter(r=>r.t>=a&&r.t<=b&&ok(r[ch.id]));
+    if(pts.length<2)continue;
+    const ys=pts.map(p=>p[ch.id]),n=pts.length;
+    const avg=ys.reduce((s,v)=>s+v,0)/n;
+    const sx=pts.reduce((s,p)=>s+p.t,0),sy=ys.reduce((s,v)=>s+v,0);
+    const sxx=pts.reduce((s,p)=>s+p.t*p.t,0),sxy=pts.reduce((s,p)=>s+p.t*p[ch.id],0);
+    const sl=(n*sxy-sx*sy)/(n*sxx-sx*sx);
+    h+=`<b>${ch.name}</b> 평균 ${fmt(avg)} · 최소 ${fmt(Math.min(...ys))} · 최대 ${fmt(Math.max(...ys))} · 기울기 ${sl.toFixed(3)}/s<br>`;
+  }
+  $('analyzeOut').innerHTML=h; $('analyzeOut').style.display='block';
+}
+
+// ─────────── 표 ───────────
+function rebuildTable(){
+  const chs=activeChannels();
+  $('dataTable').querySelector('thead').innerHTML=
+    '<tr><th>시간(s)</th>'+chs.map(c=>`<th>${c.name}${c.unit?`(${c.unit})`:''}</th>`).join('')+'<th>마커</th></tr>';
+  const tb=$('dataTable').querySelector('tbody'); tb.innerHTML='';
+  for(const r of S.data.slice(-100)) tb.appendChild(mkRow(r,chs));
+}
+function mkRow(r,chs){
+  const tr=document.createElement('tr');
+  tr.innerHTML=`<td>${r.t.toFixed(2)}</td>`+
+    chs.map(c=>`<td>${r[c.id]==null?'':isNaN(r[c.id])?'ERR':fmt(r[c.id])}</td>`).join('')+
+    `<td>${r.marker||''}</td>`;
+  return tr;
+}
+function pushTable(r){
+  const tb=$('dataTable').querySelector('tbody');
+  tb.appendChild(mkRow(r,activeChannels()));
+  while(tb.children.length>100) tb.removeChild(tb.firstChild);
+  $('tableWrap').scrollTop=$('tableWrap').scrollHeight;
+}
+
+// ─────────── CSV ───────────
+function teamOf(){ return ($('teamName').value||'무명조').replace(/[\\/:*?"<>|]/g,'_'); }
+function download(csv,tag){
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  const fn=`${teamOf()}_${tag}_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download=fn; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+}
+function saveCsv(){
+  if(!S.data.length){alert('저장할 데이터가 없습니다.');return;}
+  const chs=activeChannels();
+  let csv='시간(s),'+chs.map(c=>c.name+(c.unit?`(${c.unit})`:'')).join(',')+',마커\n';
+  for(const r of S.data)
+    csv+=r.t.toFixed(3)+','+chs.map(c=>{const v=r[c.id];return v==null?'':isNaN(v)?'ERR':v;}).join(',')+','+(r.marker||'')+'\n';
+  download(csv,'측정');
+}
+
+/* ══════════════════════════════════════════
+   홈런더비
+   ══════════════════════════════════════════ */
+/* 구종: travel(ms)은 투수판→홈플레이트 18.44m 도달 시간.
+   구속(km/h)은 여기서 계산하므로 물리적으로 일관됩니다.
+   drift = 좌우 휨(+오른쪽), drop = 추가 낙차(중력 외 변화량) */
+const PITCHES=[
+  {id:'ff',name:'포심',     travel:500,drift: 0.00,drop:0.06},
+  {id:'sl',name:'슬라이더', travel:560,drift: 0.30,drop:0.14},
+  {id:'ch',name:'체인지업', travel:640,drift: 0.08,drop:0.22},
+  {id:'cb',name:'커브',     travel:720,drift:-0.12,drop:0.44},
+];
+const MOUND_M=18.44;
+const kmh=ms=>Math.round(MOUND_M/(ms/1000)*3.6);
+
+/* ── 효과음 (Web Audio) ── */
+const SFX={
+  ctx:null,muted:false,
+  init(){ if(!this.ctx){ try{this.ctx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){} }
+          if(this.ctx?.state==='suspended') this.ctx.resume(); },
+  noise(dur){
+    const c=this.ctx,n=Math.floor(c.sampleRate*dur);
+    const b=c.createBuffer(1,n,c.sampleRate),d=b.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+    const s=c.createBufferSource(); s.buffer=b; return s;
+  },
+  crack(power){            // 배트 타격음
+    if(this.muted||!this.ctx)return; const c=this.ctx,t=c.currentTime;
+    const s=this.noise(0.16),f=c.createBiquadFilter(),g=c.createGain();
+    f.type='bandpass'; f.frequency.value=1400+power*1800; f.Q.value=1.1;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.5+power*0.35,t+0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+0.15);
+    s.connect(f);f.connect(g);g.connect(c.destination);s.start(t);s.stop(t+0.16);
+  },
+  whoosh(){                // 헛스윙
+    if(this.muted||!this.ctx)return; const c=this.ctx,t=c.currentTime;
+    const s=this.noise(0.3),f=c.createBiquadFilter(),g=c.createGain();
+    f.type='bandpass';f.Q.value=2.2;
+    f.frequency.setValueAtTime(420,t);
+    f.frequency.exponentialRampToValueAtTime(2600,t+0.16);
+    f.frequency.exponentialRampToValueAtTime(500,t+0.3);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.28,t+0.09);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+0.3);
+    s.connect(f);f.connect(g);g.connect(c.destination);s.start(t);s.stop(t+0.3);
+  },
+  thud(){                  // 파울·아웃
+    if(this.muted||!this.ctx)return; const c=this.ctx,t=c.currentTime;
+    const o=c.createOscillator(),g=c.createGain();
+    o.type='sine';o.frequency.setValueAtTime(160,t);
+    o.frequency.exponentialRampToValueAtTime(70,t+0.16);
+    g.gain.setValueAtTime(0.32,t);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+0.24);
+    o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+0.25);
+  },
+  cheer(){                 // 홈런 함성
+    if(this.muted||!this.ctx)return; const c=this.ctx,t=c.currentTime;
+    const s=this.noise(1.5),f=c.createBiquadFilter(),g=c.createGain();
+    f.type='lowpass';
+    f.frequency.setValueAtTime(500,t);
+    f.frequency.linearRampToValueAtTime(2200,t+0.5);
+    f.frequency.linearRampToValueAtTime(900,t+1.5);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.linearRampToValueAtTime(0.30,t+0.35);
+    g.gain.linearRampToValueAtTime(0.20,t+1.0);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+1.5);
+    s.connect(f);f.connect(g);g.connect(c.destination);s.start(t);s.stop(t+1.5);
+  },
+  beep(fr,dur,vol){        // 릴리스 신호
+    if(this.muted||!this.ctx)return; const c=this.ctx,t=c.currentTime;
+    const o=c.createOscillator(),g=c.createGain();
+    o.type='square';o.frequency.value=fr;
+    g.gain.setValueAtTime(vol||0.12,t);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur);
+  }
+};
+const HR={
+  active:false,pitchNo:0,total:0,homers:0,hits:0,best:0,log:[],
+  phase:'idle',          // idle | wind | fly | hit | result
+  cur:null,releaseWeb:0,arriveDev:0,judged:false,raf:0,
+  hitAt:0,hitDir:0,hitDist:0,hitTag:'',windAt:0,
+  TOTAL_PITCH:10,
+
+  async start(){
+    if(!S.connected)return;
+    SFX.init();
+    this.pitchNo=0;this.total=0;this.homers=0;this.hits=0;this.best=0;this.log=[];
+    $('hrLog').innerHTML='';this.render();
+    this.active=true;
+    await send('E,fast,1'); await sleep(70);
+    await send('R,100');    await sleep(70);
+    await send('F,2200');   await sleep(70);
+    await send('G,1');      await sleep(120);
+    await syncClock();
+    await acquireWake();
+    this.loop(); this.next();
+  },
+  stop(){
+    if(!this.active)return;
+    this.active=false;this.phase='idle';
+    cancelAnimationFrame(this.raf);
+    send('G,0'); send('E,fast,0'); send(`R,${S.rateMs}`);
+    releaseWake(); setHRUI(false);
+  },
+  next(){
+    if(this.pitchNo>=this.TOTAL_PITCH){ this.finish(); return; }
+    this.pitchNo++;
+    // 1~3구 포심 / 4~7구 포심·체인지업 / 8~10구 전 구종
+    let pool;
+    if(this.pitchNo<=3) pool=[PITCHES[0]];
+    else if(this.pitchNo<=7) pool=[PITCHES[0],PITCHES[2]];
+    else pool=PITCHES;
+    this.cur=pool[Math.floor(Math.random()*pool.length)];
+    this.judged=false; this.phase='wind'; this.windAt=performance.now();
+    msg('hrMsg',`${this.pitchNo}구`,'공을 끝까지 보고 휘두르세요');
+    const windup=800+Math.random()*800;
+    setTimeout(()=>{
+      if(!this.active||this.phase!=='wind')return;
+      this.phase='fly';
+      this.releaseWeb=performance.now();
+      this.arriveDev=toDev(this.releaseWeb+this.cur.travel);
+      msg('hrMsg','','');
+      SFX.beep(1200,0.05,0.10);
+      send('T,1200,40');
+    },windup);
+    this.render();
+  },
+  feed(f,ms){
+    if(this.phase!=='fly'||this.judged)return;
+    const st=f[IDX_SWINGT],sp=f[IDX_SWINGPEAK];
+    if(st===undefined||st==='')return;
+    const swingDev=parseFloat(st),peak=parseFloat(sp)||2200;
+    if(isNaN(swingDev))return;
+    this.judged=true;
+    this.judge(swingDev-this.arriveDev,peak);
+  },
+
+  /* diff < 0 : 빠름(당겨치기, 좌측) / diff > 0 : 늦음(밀어치기, 우측) */
+  judge(diff,peak){
+    const ad=Math.abs(diff);
+    // 스윙 세기 → 파워 계수 (2200~8000mg)
+    const power=Math.min(1,Math.max(0,(peak-2200)/5800));
+    const dirN=Math.max(-1,Math.min(1,diff/260));      // -1(좌) ~ +1(우)
+    let tag,cls,dist=0,timing;
+
+    if(ad>320){                                        // 스윙이 너무 어긋남
+      tag='헛스윙';cls='t-miss';timing=1;
+    }else if(ad>230){                                  // 파울 영역
+      tag='파울';cls='t-weak';timing=0.15;dist=Math.round(20+power*25);
+    }else{
+      timing=ad<=60?1.0:ad<=150?0.78:0.45;
+      // 중앙에 가까울수록 비거리 이득
+      dist=Math.round((0.35+power*0.65)*timing*135);
+      if(dist>=110){tag='홈런';cls='t-perfect';}
+      else if(dist>=88){tag='2루타';cls='t-good';}
+      else if(dist>=58){tag='안타';cls='t-good';}
+      else {tag=diff<0?'뜬공 아웃':'땅볼 아웃';cls='t-weak';}
+    }
+
+    const field=ad>230?(diff<0?'좌측 파울':'우측 파울')
+              :(diff<-60?'좌익 방면':diff>60?'우익 방면':'중견 방면');
+
+    if(tag==='홈런'){this.homers++;this.hits++;}
+    else if(tag==='2루타'||tag==='안타')this.hits++;
+    if(dist>this.best)this.best=dist;
+    this.total+=dist;
+
+    // 효과음
+    if(tag==='헛스윙') SFX.whoosh();
+    else if(tag==='홈런'){ SFX.crack(1); setTimeout(()=>SFX.cheer(),150); }
+    else if(tag==='파울'||tag.indexOf('아웃')>=0){ SFX.crack(power*0.5); setTimeout(()=>SFX.thud(),120); }
+    else SFX.crack(power);
+    send(tag==='홈런'?'T,1319,300':tag==='헛스윙'?'T,262,220':'T,784,150');
+
+    // 타구 애니메이션 시작
+    this.phase='hit'; this.hitAt=performance.now();
+    this.hitDir=dirN; this.hitDist=dist; this.hitTag=tag;
+
+    this.log.unshift({no:this.pitchNo,pitch:this.cur.name,speed:kmh(this.cur.travel),
+      tag,cls,dist,field,diff:Math.round(diff),peak:Math.round(peak)});
+    this.renderLog(); this.render();
+
+    const wait=tag==='헛스윙'?900:1600;
+    setTimeout(()=>{
+      if(!this.active)return;
+      this.phase='result';
+      msg('hrMsg', tag==='홈런'?'홈런!':(dist>0?dist+'m':tag),
+          `${this.cur.name} ${kmh(this.cur.travel)}km/h · ${field} · ${diff>0?'늦음':'빠름'} ${Math.abs(Math.round(diff))}ms`);
+      setTimeout(()=>{ if(this.active)this.next(); },1300);
+    },wait);
+  },
+
+  finish(){
+    this.phase='idle';
+    msg('hrMsg',this.total+'m',`홈런 ${this.homers} · 안타 ${this.hits} · 최장 ${this.best}m`);
+    if(this.homers>0)SFX.cheer();
+    setTimeout(()=>this.stop(),400);
+  },
+  render(){
+    $('hrPitch').textContent=this.pitchNo;
+    $('hrTotal').textContent=this.total;
+    $('hrHomer').textContent=this.homers;
+    $('hrHit').textContent=this.hits;
+    $('hrBest').textContent=this.best;
+  },
+  renderLog(){
+    $('hrLog').innerHTML=this.log.map(r=>
+      `<div class="logrow"><span class="idx">${r.no}구</span>
+       <span style="width:96px;color:var(--ink-dim)">${r.pitch} ${r.speed}km/h</span>
+       <span class="tag ${r.cls}" style="width:70px">${r.tag}</span>
+       <span class="num" style="width:52px">${r.dist}m</span>
+       <span style="width:72px;color:var(--ink-dim)">${r.field}</span>
+       <span class="num" style="color:var(--ink-dim)">${r.diff>0?'+':''}${r.diff}ms · ${r.peak}mg</span></div>`).join('');
+  },
+
+  /* ── 타석 시점 렌더링 ── */
+  loop(){
+    const cv=$('hrCanvas'),ctx=cv.getContext('2d');
+    const draw=()=>{
+      if(!this.active)return;
+      fitCanvas(cv);
+      const W=cv.width,H=cv.height;
+      const HZ=H*0.30;              // 지평선(펜스 밑단)
+      const PY=H*0.93;              // 홈플레이트
+      ctx.clearRect(0,0,W,H);
+
+      // 하늘
+      const sky=ctx.createLinearGradient(0,0,0,HZ);
+      sky.addColorStop(0,'#BFD9EE'); sky.addColorStop(1,'#E6F0F6');
+      ctx.fillStyle=sky; ctx.fillRect(0,0,W,HZ);
+      // 관중석
+      ctx.fillStyle='#9AA7AE'; ctx.fillRect(0,HZ-H*0.10,W,H*0.10);
+      ctx.fillStyle='rgba(255,255,255,.22)';
+      for(let i=0;i<W;i+=9) if((i>>3)%3===0) ctx.fillRect(i,HZ-H*0.10,4,H*0.10);
+      // 펜스
+      ctx.fillStyle='#2F6B4F'; ctx.fillRect(0,HZ-H*0.035,W,H*0.035);
+      ctx.strokeStyle='#E8EFE9';ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(0,HZ-H*0.035);ctx.lineTo(W,HZ-H*0.035);ctx.stroke();
+      // 외야 잔디 (줄무늬)
+      ctx.fillStyle='#5DA36B'; ctx.fillRect(0,HZ,W,PY-HZ);
+      ctx.fillStyle='rgba(255,255,255,.06)';
+      for(let i=0;i<10;i++){
+        const y0=HZ+(PY-HZ)*(i/10),y1=HZ+(PY-HZ)*((i+0.5)/10);
+        if(i%2===0)ctx.fillRect(0,y0,W,y1-y0);
+      }
+      // 내야 흙
+      ctx.fillStyle='#C29A6B';
+      ctx.beginPath();ctx.ellipse(W/2,PY,W*0.62,(PY-HZ)*0.58,0,Math.PI,0);ctx.fill();
+      // 파울 라인
+      ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=2.5;
+      ctx.beginPath();ctx.moveTo(W/2,PY);ctx.lineTo(-W*0.15,HZ);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(W/2,PY);ctx.lineTo(W*1.15,HZ);ctx.stroke();
+      // 마운드 + 투수
+      const my=HZ+(PY-HZ)*0.30;
+      ctx.fillStyle='#B98F5F';
+      ctx.beginPath();ctx.ellipse(W/2,my,W*0.085,H*0.022,0,0,7);ctx.fill();
+      this.drawPitcher(ctx,W/2,my,W,H);
+      // 홈플레이트
+      ctx.fillStyle='#F2F5F1';
+      ctx.beginPath();
+      ctx.moveTo(W/2-W*0.055,PY-H*0.02);ctx.lineTo(W/2+W*0.055,PY-H*0.02);
+      ctx.lineTo(W/2+W*0.04,PY+H*0.012);ctx.lineTo(W/2,PY+H*0.03);
+      ctx.lineTo(W/2-W*0.04,PY+H*0.012);ctx.closePath();ctx.fill();
+      // 스트라이크존
+      ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=2;
+      ctx.setLineDash([6,5]);
+      ctx.strokeRect(W/2-W*0.085,PY-H*0.30,W*0.17,H*0.20);
+      ctx.setLineDash([]);
+
+      if(this.phase==='fly') this.drawIncoming(ctx,W,H,HZ,my,PY);
+      else if(this.phase==='hit') this.drawBatted(ctx,W,H,HZ,PY);
+
+      this.raf=requestAnimationFrame(draw);
+    };
+    draw();
+  },
+  drawPitcher(ctx,x,y,W,H){
+    // 와인드업 진행도 (모든 구종 동일 모션 → 구종을 미리 알 수 없음)
+    let k=0;
+    if(this.phase==='wind') k=Math.min(1,(performance.now()-this.windAt)/900);
+    else if(this.phase==='fly') k=1;
+    const s=H*0.075;
+    ctx.fillStyle='#2A3B44';
+    ctx.beginPath();ctx.arc(x,y-s*1.55,s*0.26,0,7);ctx.fill();        // 머리
+    ctx.fillRect(x-s*0.17,y-s*1.32,s*0.34,s*0.78);                    // 몸통
+    ctx.strokeStyle='#2A3B44';ctx.lineWidth=Math.max(2,s*0.13);
+    // 팔 (뒤로 들었다가 앞으로)
+    const arm=-2.4+k*3.0;
+    ctx.beginPath();ctx.moveTo(x,y-s*1.18);
+    ctx.lineTo(x+Math.cos(arm)*s*0.62,y-s*1.18+Math.sin(arm)*s*0.62);ctx.stroke();
+    // 다리
+    ctx.beginPath();ctx.moveTo(x-s*0.10,y-s*0.54);ctx.lineTo(x-s*0.26,y);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+s*0.10,y-s*0.54);ctx.lineTo(x+s*0.20+k*s*0.28,y);ctx.stroke();
+  },
+  drawIncoming(ctx,W,H,HZ,my,PY){
+    const p=Math.min(1,(performance.now()-this.releaseWeb)/this.cur.travel);
+    const e=Math.pow(p,2.1);                       // 원근: 후반에 급격히 접근
+    const x=W/2+this.cur.drift*W*0.17*e+Math.sin(p*Math.PI)*this.cur.drift*W*0.05;
+    const y=my+(PY-H*0.20-my)*e+this.cur.drop*H*0.26*e*e;
+    const r=Math.max(2.5,3+Math.pow(p,2.7)*H*0.075);
+    // 잔상
+    for(let i=1;i<=3;i++){
+      const pp=Math.max(0,p-i*0.055),ee=Math.pow(pp,2.1);
+      const xx=W/2+this.cur.drift*W*0.17*ee+Math.sin(pp*Math.PI)*this.cur.drift*W*0.05;
+      const yy=my+(PY-H*0.20-my)*ee+this.cur.drop*H*0.26*ee*ee;
+      ctx.fillStyle=`rgba(255,255,255,${0.20-i*0.05})`;
+      ctx.beginPath();ctx.arc(xx,yy,Math.max(2,3+Math.pow(pp,2.7)*H*0.075),0,7);ctx.fill();
+    }
+    ctx.fillStyle='#FFFFFF';ctx.strokeStyle='#C4306B';ctx.lineWidth=Math.max(1.5,r*0.13);
+    ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.arc(x-r*0.32,y,r*0.78,-0.95,0.95);ctx.stroke();
+    if(p>=1&&!this.judged){ this.judged=true; this.judge(9999,2200); }
+  },
+  drawBatted(ctx,W,H,HZ,PY){
+    const dur=this.hitTag==='헛스윙'?1:1500;
+    if(this.hitTag==='헛스윙')return;
+    const t=Math.min(1,(performance.now()-this.hitAt)/dur);
+    const reach=Math.min(1,this.hitDist/130);              // 비거리 → 도달 정도
+    const x=W/2+this.hitDir*W*0.62*t;
+    const yEnd=PY-(PY-HZ)*Math.max(0.15,reach);
+    const arc=H*(0.16+reach*0.22);
+    const y=PY-H*0.20+((yEnd-(PY-H*0.20))*t)-Math.sin(Math.PI*t)*arc;
+    const r=Math.max(2,H*0.055*(1-t*0.86));
+    // 궤적
+    ctx.strokeStyle='rgba(196,48,107,.35)';ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let i=0;i<=20;i++){
+      const tt=t*i/20;
+      const xx=W/2+this.hitDir*W*0.62*tt;
+      const yy=PY-H*0.20+((yEnd-(PY-H*0.20))*tt)-Math.sin(Math.PI*tt)*arc;
+      i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);
+    }
+    ctx.stroke();
+    ctx.fillStyle='#FFFFFF';ctx.strokeStyle='#C4306B';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();
+  },
+
+  csv(){
+    if(!this.log.length){alert('기록이 없습니다.');return;}
+    let c='투구,구종,구속(km/h),판정,타구방향,비거리(m),시간차(ms),스윙세기(mg)\n';
+    for(const r of [...this.log].reverse())
+      c+=`${r.no},${r.pitch},${r.speed},${r.tag},${r.field},${r.dist},${r.diff},${r.peak}\n`;
+    download(c,'홈런더비');
+  }
+};
+
+/* ══════════════════════════════════════════
+   점프 높이
+   ══════════════════════════════════════════ */
+const JP={
+  active:false,tries:0,best:0,log:[],
+  airAccum:0,waiting:false,lastEnd:0,raf:0,anim:0,
+  MIN_AIR:150, MAX_AIR:1000, LAND_TH:2500,
+
+  async start(){
+    if(!S.connected)return;
+    this.tries=0;this.best=0;this.log=[];this.airAccum=0;
+    $('jpLog').innerHTML='';this.render();
+    this.active=true;
+    await send('E,fast,1'); await sleep(70);
+    await send('R,100');    await sleep(70);
+    await send('G,1');
+    await acquireWake();
+    msg('jpMsg','준비','제자리에서 힘껏 뛰세요');
+    this.loop();
+  },
+  stop(){
+    if(!this.active)return;
+    this.active=false;cancelAnimationFrame(this.raf);
+    send('G,0');send('E,fast,0');send(`R,${S.rateMs}`);
+    releaseWake();setJPUI(false);
+  },
+  feed(f,ms){
+    const fr=parseFloat(f[IDX_FREEMS])||0;
+    const am=parseFloat(f[IDX_ACCMAX])||0;
+    if(fr>0){ this.airAccum+=fr; return; }
+    if(this.airAccum>0){
+      const air=this.airAccum; this.airAccum=0;
+      if(performance.now()-this.lastEnd<1000) return;   // 쿨다운
+      this.lastEnd=performance.now();
+      // 유효성 검사
+      if(air<this.MIN_AIR){ msg('jpMsg','짧음','조금 더 높이 뛰어보세요'); return; }
+      if(air>this.MAX_AIR){ msg('jpMsg','무효','기기를 던지면 안 됩니다'); send('T,220,400'); return; }
+      if(am<this.LAND_TH){ msg('jpMsg','무효','착지 충격이 감지되지 않았습니다'); send('T,220,400'); return; }
+      const t=air/1000;
+      const h=Math.round(9.8*t*t/8*1000)/10;            // cm
+      this.tries++;
+      if(h>this.best)this.best=h;
+      this.log.unshift({no:this.tries,air:air,h:h,land:Math.round(am)});
+      $('jpLast').textContent=h.toFixed(1);
+      $('jpAir').textContent=t.toFixed(2);
+      this.anim=performance.now();
+      msg('jpMsg',h.toFixed(1)+'cm',`체공 ${t.toFixed(2)}초 · 착지 ${Math.round(am)}mg`);
+      send(h>=this.best?'T,1047,250':'T,784,150');
+      this.render();this.renderLog();
+    }
+  },
+  render(){ $('jpTry').textContent=this.tries; $('jpBest').textContent=this.best.toFixed(1); },
+  renderLog(){
+    $('jpLog').innerHTML=this.log.map(r=>
+      `<div class="logrow"><span class="idx">${r.no}회</span>
+       <span class="tag t-good num" style="width:72px">${r.h.toFixed(1)}cm</span>
+       <span class="num" style="color:var(--ink-dim)">체공 ${(r.air/1000).toFixed(2)}s · 착지 ${r.land}mg</span></div>`).join('');
+  },
+  loop(){
+    const cv=$('jpCanvas'),ctx=cv.getContext('2d');
+    const draw=()=>{
+      if(!this.active)return;
+      fitCanvas(cv);
+      const W=cv.width,H=cv.height;
+      ctx.clearRect(0,0,W,H);
+      const gy=H*0.85;
+      // 지면
+      ctx.strokeStyle='#D3DBD6';ctx.lineWidth=2.5;
+      ctx.beginPath();ctx.moveTo(W*0.12,gy);ctx.lineTo(W*0.88,gy);ctx.stroke();
+      // 최고 기록선
+      if(this.best>0){
+        const by=gy-Math.min(H*0.62,this.best/60*H*0.62);
+        ctx.strokeStyle='#C4306B';ctx.setLineDash([7,5]);ctx.lineWidth=2;
+        ctx.beginPath();ctx.moveTo(W*0.12,by);ctx.lineTo(W*0.88,by);ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle='#C4306B';ctx.font='700 13px sans-serif';
+        ctx.fillText('최고 '+this.best.toFixed(1)+'cm',W*0.12,by-7);
+      }
+      // 최근 점프 애니메이션
+      const last=this.log[0];
+      if(last){
+        const el=(performance.now()-this.anim)/900;
+        const p=el<1?Math.sin(Math.min(1,el)*Math.PI):0;
+        const hy=gy-p*Math.min(H*0.62,last.h/60*H*0.62);
+        ctx.fillStyle='#0E7C6B';
+        ctx.beginPath();ctx.arc(W/2,hy-14,15,0,7);ctx.fill();
+        ctx.fillRect(W/2-9,hy,18,14);
+      }
+      this.raf=requestAnimationFrame(draw);
+    };
+    draw();
+  },
+  csv(){
+    if(!this.log.length){alert('기록이 없습니다.');return;}
+    let c='시도,높이(cm),체공시간(s),착지충격(mg)\n';
+    for(const r of [...this.log].reverse()) c+=`${r.no},${r.h},${(r.air/1000).toFixed(3)},${r.land}\n`;
+    download(c,'점프');
+  }
+};
+
+// ─────────── 게임 공통 도우미 ───────────
+function msg(id,big,sub){
+  const el=$(id);
+  el.innerHTML=big?`<div class="big">${big}</div><div class="sub">${sub||''}</div>`:'';
+}
+function fitCanvas(cv){
+  const r=cv.getBoundingClientRect();
+  const w=Math.round(r.width),h=Math.round(r.height);
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+}
+function setHRUI(run){
+  $('hrStart').textContent=run?'경기 중단':'경기 시작';
+  $('hrStart').classList.toggle('stop',run);
+  $('hrStart').classList.toggle('primary',!run);
+}
+function setJPUI(run){
+  $('jpStart').textContent=run?'측정 중단':'측정 시작';
+  $('jpStart').classList.toggle('stop',run);
+  $('jpStart').classList.toggle('primary',!run);
+}
+
+// ─────────── 설정 UI ───────────
+function buildPinUI(){
+  const b=$('pinList'); b.innerHTML='';
+  for(let i=0;i<4;i++){
+    const d=document.createElement('div'); d.className='pinrow';
+    d.innerHTML=`<div class="r1"><span class="pinname">P${i+1}</span>
+        <select data-pin="${i}" data-k="mode">
+          <option value="X">사용 안 함</option>
+          <option value="A">아날로그 센서</option>
+          <option value="T">DS18B20 온도</option></select></div>
+      <div class="r1" data-profrow="${i}" style="display:none">
+        <span class="pinname"></span><select data-pin="${i}" data-k="profile"></select></div>
+      <div class="opts" data-optrow="${i}"></div>`;
+    b.appendChild(d);
+  }
+  b.addEventListener('change',e=>{
+    const el=e.target,pin=parseInt(el.dataset.pin); if(isNaN(pin))return;
+    if(el.dataset.k==='mode'){
+      S.pins[pin].mode=el.value;
+      S.pins[pin].profile=el.value==='T'?'ds':'raw';
+      S.pins[pin].opts={}; refreshPin(pin);
+      if(S.connected)send(`M,${pin+1},${el.value}`);
+    }else if(el.dataset.k==='profile'){
+      S.pins[pin].profile=el.value;S.pins[pin].opts={};refreshOpts(pin);
+    }
+    channelsChanged();
+  });
+  b.addEventListener('input',e=>{
+    const el=e.target; if(el.dataset.opt===undefined)return;
+    S.pins[parseInt(el.dataset.pin)].opts[el.dataset.opt]=parseFloat(el.value);
+  });
+}
+function refreshPin(i){
+  const row=document.querySelector(`[data-profrow="${i}"]`),sel=row.querySelector('select');
+  if(S.pins[i].mode==='A'){
+    row.style.display='flex';
+    sel.innerHTML=PROFILES.A.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    sel.value=S.pins[i].profile;
+  } else row.style.display='none';
+  refreshOpts(i);
+}
+function refreshOpts(i){
+  const box=document.querySelector(`[data-optrow="${i}"]`),p=S.pins[i];
+  const f=(k,l,d)=>`<label>${l}</label><input type="number" step="any" value="${d}" data-pin="${i}" data-opt="${k}">`;
+  box.innerHTML='';
+  if(p.mode==='A'){
+    if(p.profile==='amp')box.innerHTML=f('shunt','션트 Ω',1)+f('vref','기준 V',3.3);
+    else if(p.profile==='volt'||p.profile==='vmod')box.innerHTML=f('vref','기준 V',3.3);
+    else if(p.profile==='cal2')box.innerHTML=f('x1','원시1',0)+f('y1','값1',0)+f('x2','원시2',1023)+f('y2','값2',100);
+    else if(p.profile==='lin')box.innerHTML=f('a','a',1)+f('b','b',0);
+  } else if(p.mode==='T') box.innerHTML=f('off','오프셋 °C',0);
+  box.querySelectorAll('input').forEach(el=>{S.pins[i].opts[el.dataset.opt]=parseFloat(el.value);});
+}
+function channelsChanged(){ rebuildVals();rebuildXY();rebuildChart();rebuildTable(); }
+function rebuildXY(){
+  const chs=activeChannels(),o=chs.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  $('xCh').innerHTML=o;$('yCh').innerHTML=o;
+  if(chs.some(c=>c.id===S.xCh))$('xCh').value=S.xCh; else S.xCh=chs[0]?.id;
+  if(chs.some(c=>c.id===S.yCh))$('yCh').value=S.yCh; else S.yCh=chs[1]?.id||chs[0]?.id;
+}
+document.querySelectorAll('[data-ch]').forEach(el=>{
+  el.addEventListener('change',()=>{
+    const c=el.dataset.ch; S.fixed[c]=el.checked;
+    if(c==='alt'){
+      $('p0row').style.display=el.checked?'flex':'none';
+      if(el.checked&&!S.fixed.prs){
+        S.fixed.prs=true;document.querySelector('[data-ch="prs"]').checked=true;
+        if(S.connected)send('E,prs,1');
+      }
+    }
+    if(c==='lgt')$('lgtWarn').style.display=el.checked?'block':'none';
+    if(S.connected&&c!=='alt')send(`E,${c},${el.checked?1:0}`);
+    channelsChanged();
+  });
+});
+
+// ─────────── 탭·버튼 ───────────
+document.querySelectorAll('#tabs button').forEach(b=>{
+  b.onclick=()=>{
+    if(S.running){alert('측정을 정지한 뒤 이동하세요.');return;}
+    if(HR.active||JP.active){alert('게임을 먼저 종료하세요.');return;}
+    document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    S.view=b.dataset.view;
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('sel'));
+    $('v_'+S.view).classList.add('sel');
+    $('side').classList.toggle('hidden',S.view!=='measure');
+  };
+});
+$('btnMenu').onclick=()=>$('side').classList.toggle('hidden');
+$('btnConn').onclick=()=>S.connected?disconnect():connect();
+$('btnIdent').onclick=()=>send('ID');
+$('rate').oninput=e=>{S.rateMs=parseInt(e.target.value);$('rateVal').textContent=S.rateMs+'ms';};
+$('rate').onchange=()=>{if(S.connected)send(`R,${S.rateMs}`);};
+$('gMode').onchange=e=>{
+  S.gMode=e.target.value;$('xyRow').style.display=S.gMode==='xy'?'block':'none';
+  S.aPts=[];$('analyzeOut').style.display='none';rebuildChart();
+};
+$('xCh').onchange=e=>{S.xCh=e.target.value;rebuildChart();};
+$('yCh').onchange=e=>{S.yCh=e.target.value;rebuildChart();};
+$('chkAnalyze').onchange=e=>{S.analyze=e.target.checked;S.aPts=[];$('analyzeOut').style.display='none';chart?.update('none');};
+
+$('btnStart').onclick=async()=>{
+  if(!S.running){
+    if(!activeChannels().length){alert('활성화된 채널이 없습니다. 왼쪽 패널에서 센서를 설정하세요.');return;}
+    S.running=true;await send('Z');await sleep(80);await send('G,1');
+    setRunUI(true);await acquireWake();
+  }else{ S.running=false;await send('G,0');setRunUI(false);releaseWake(); }
+};
+$('btnMark').onclick=()=>{
+  if(!S.data.length)return;
+  const t=S.data[S.data.length-1].t,l='M'+(S.markers.length+1);
+  S.markers.push({t,label:l});S.data[S.data.length-1].marker=l;chart?.update('none');
+};
+$('btnReset').onclick=async()=>{
+  if(S.data.length&&!confirm('측정 데이터를 모두 지울까요?'))return;
+  S.data=[];S.markers=[];S.aPts=[];$('analyzeOut').style.display='none';
+  await send('Z');rebuildChart();rebuildTable();rebuildVals();
+};
+$('btnCsv').onclick=saveCsv;
+$('hrStart').onclick=()=>{ if(HR.active){HR.stop();HR.csv();} else {HR.start();setHRUI(true);} };
+$('hrMute').onclick=()=>{
+  SFX.init(); SFX.muted=!SFX.muted;
+  $('hrMute').textContent=SFX.muted?'🔇':'🔊';
+  $('hrMute').style.opacity=SFX.muted?'.5':'1';
+};
+$('jpStart').onclick=()=>{ if(JP.active){JP.stop();JP.csv();} else {JP.start();setJPUI(true);} };
+
+function setConnUI(on){
+  $('dot').classList.toggle('on',on);
+  $('devName').textContent=on?S.devName:'미연결';
+  $('btnConn').textContent=on?'해제':'연결';
+  $('btnConn').classList.toggle('primary',!on);
+  ['btnIdent','btnStart','btnMark','btnReset','hrStart','jpStart'].forEach(i=>$(i).disabled=!on);
+}
+function setRunUI(r){
+  $('btnStart').textContent=r?'측정 정지':'측정 시작';
+  $('btnStart').classList.toggle('stop',r);
+  $('btnStart').classList.toggle('primary',!r);
+}
+
+
+/* ══════════════════════════════════════════
+   모션 뷰 — 가속도 3축으로 기기 자세·상태 표시
+   ══════════════════════════════════════════ */
+const MOTION={
+  on:false,raf:0,rx:0,ry:0,   // rx,ry = 화면에 그릴 기울기(부드럽게 따라감)
+  toggle(){
+    this.on=!this.on;
+    $('motionBox').style.display=this.on?'flex':'none';
+    $('btnMotion').classList.toggle('primary',this.on);
+    if(this.on){
+      // 3축이 꺼져 있으면 자동으로 켠다
+      ['accx','accy','accz'].forEach(c=>{
+        if(!S.fixed[c]){
+          S.fixed[c]=true;
+          const el=document.querySelector(`[data-ch="${c}"]`);
+          if(el)el.checked=true;
+          if(S.connected)send(`E,${c},1`);
+        }
+      });
+      channelsChanged();
+      this.loop();
+    }else cancelAnimationFrame(this.raf);
+  },
+  loop(){
+    const cv=$('motionCv'),ctx=cv.getContext('2d');
+    const draw=()=>{
+      if(!this.on)return;
+      const r=S.last||{};
+      const x=num(r.accx),y=num(r.accy),z=num(r.accz);
+      const mag=Math.round(Math.sqrt(x*x+y*y+z*z));
+
+      // 막대 (±2048mg 기준)
+      setBar('mbx','mvx',x); setBar('mby','mvy',y); setBar('mbz','mvz',z);
+      $('mvs').textContent=mag;
+
+      // 상태 배지
+      const st=$('mstate');
+      st.className='mstate';
+      if(mag<300){st.classList.add('free');st.textContent='자유낙하';}
+      else if(mag>2500){st.classList.add('hit');st.textContent='충격';}
+      else if(Math.abs(mag-1000)>250){st.classList.add('move');st.textContent='움직임';}
+      else st.textContent='정지';
+
+      // 기울기 계산 (중력 방향 기준)
+      const roll=Math.atan2(x,-z);
+      const pitch=Math.atan2(-y,Math.sqrt(x*x+z*z));
+      $('mtilt').textContent=`좌우 기울기 ${deg(roll)}° · 앞뒤 기울기 ${deg(pitch)}°`;
+      // 부드럽게 추종
+      this.ry+=(roll-this.ry)*0.25;
+      this.rx+=(pitch-this.rx)*0.25;
+
+      this.drawBoard(ctx,cv,this.rx,this.ry,mag);
+      this.raf=requestAnimationFrame(draw);
+    };
+    draw();
+  },
+  drawBoard(ctx,cv,rx,ry,mag){
+    const dpr=Math.min(2,window.devicePixelRatio||1);
+    const W=212,H=162;
+    if(cv.width!==W*dpr){cv.width=W*dpr;cv.height=H*dpr;}
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+
+    // 바닥 기준선(수평면)
+    ctx.strokeStyle='#DFE4DA';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(14,H-22);ctx.lineTo(W-14,H-22);ctx.stroke();
+
+    // 보드 정점 (가로 5, 세로 4, 두께 0.5)
+    // 보드 정점 (가로 5, 세로 4, 두께 0.5)
+    const pts=[[-2.5,-2,0.25],[2.5,-2,0.25],[2.5,2,0.25],[-2.5,2,0.25],
+               [-2.5,-2,-0.25],[2.5,-2,-0.25],[2.5,2,-0.25],[-2.5,2,-0.25]];
+    const cosX=Math.cos(rx),sinX=Math.sin(rx),cosY=Math.cos(ry),sinY=Math.sin(ry);
+    const tiltIso=0.50, cosI=Math.cos(tiltIso), sinI=Math.sin(tiltIso);
+    const sc=21,cx=W/2,cy=H/2-4;
+    // 회전 → 시점 기울임 → 정사영. depth는 앞뒤 판정용
+    const P=pts.map(([px,py,pz])=>{
+      const a=px*cosY+pz*sinY, c0=-px*sinY+pz*cosY;   // Y축 회전(좌우 기울기)
+      const b=py*cosX-c0*sinX, c1=py*sinX+c0*cosX;    // X축 회전(앞뒤 기울기)
+      const sy=b*cosI-c1*sinI, depth=b*sinI+c1*cosI;
+      return [cx+a*sc, cy+sy*sc, depth];
+    });
+    const faces=[
+      {i:[0,1,2,3],col:'#149A85',front:true},   // 앞면 (LED 쪽)
+      {i:[4,5,6,7],col:'#0A5348'},              // 뒷면
+      {i:[0,1,5,4],col:'#0E7C6B'},              // 위
+      {i:[3,2,6,7],col:'#0E7C6B'},              // 아래
+      {i:[1,2,6,5],col:'#0B6155'},              // 오른쪽
+      {i:[0,3,7,4],col:'#0B6155'},              // 왼쪽
+    ];
+    // 깊이 정렬 — 뒤쪽 면부터 그려야 뒤집어도 자연스럽다
+    faces.forEach(f=>f.d=f.i.reduce((s,k)=>s+P[k][2],0)/4);
+    faces.sort((a,b)=>a.d-b.d);          // 먼 면부터 그린다 (마지막이 가장 앞)
+    const nearest=faces[faces.length-1];
+    for(const f of faces){
+      ctx.beginPath();
+      f.i.forEach((k,n)=>n?ctx.lineTo(P[k][0],P[k][1]):ctx.moveTo(P[k][0],P[k][1]));
+      ctx.closePath();
+      ctx.fillStyle=f.col;ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,.20)';ctx.lineWidth=1;ctx.stroke();
+      // 앞면이 보일 때만 LED 매트릭스를 그린다
+      if(f.front&&f===nearest){
+        const [a0,a1,,a3]=f.i.map(k=>P[k]);
+        ctx.fillStyle='rgba(255,255,255,.66)';
+        for(let r=0;r<5;r++)for(let c=0;c<5;c++){
+          const u=(c+0.5)/5,v=(r+0.5)/5;
+          ctx.fillRect(a0[0]+(a1[0]-a0[0])*u+(a3[0]-a0[0])*v-1.4,
+                       a0[1]+(a1[1]-a0[1])*u+(a3[1]-a0[1])*v-1.4,2.8,2.8);
+        }
+      }
+    }
+    // 중력 방향 화살표
+    ctx.strokeStyle=mag<300?'#D98A26':'#6B7B80';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(W-24,20);ctx.lineTo(W-24,44);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(W-28,39);ctx.lineTo(W-24,45);ctx.lineTo(W-20,39);ctx.stroke();
+    ctx.fillStyle='#6B7B80';ctx.font='700 10px sans-serif';
+    ctx.fillText(mag<300?'무중력':'중력',W-42,16);
+  }
+};
+const num=v=>(v==null||isNaN(v))?0:v;
+const deg=r=>Math.round(r*180/Math.PI);
+function setBar(barId,valId,v){
+  const p=Math.max(-1,Math.min(1,v/2048));
+  const el=$(barId);
+  el.style.width=Math.abs(p)*50+'%';
+  el.style.left=p<0?(50-Math.abs(p)*50)+'%':'50%';
+  $(valId).textContent=Math.round(v);
+}
+$('btnMotion').onclick=()=>MOTION.toggle();
+$('btnAxyz').onclick=()=>{
+  const anyOff=['accx','accy','accz'].some(c=>!S.fixed[c]);
+  ['accx','accy','accz'].forEach(c=>{
+    S.fixed[c]=anyOff;
+    const el=document.querySelector(`[data-ch="${c}"]`); if(el)el.checked=anyOff;
+    if(S.connected)send(`E,${c},${anyOff?1:0}`);
+  });
+  $('btnAxyz').textContent=anyOff?'3축 한번에 끄기':'3축 한번에 켜기';
+  channelsChanged();
+};
+
+// ─────────── Wake Lock ───────────
+async function acquireWake(){ try{S.wakeLock=await navigator.wakeLock?.request('screen');}catch(e){} }
+function releaseWake(){ S.wakeLock?.release();S.wakeLock=null; }
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&(S.running||HR.active||JP.active))acquireWake();
+});
+
+// ─────────── 초기화 ───────────
+(function(){
+  if(!navigator.bluetooth){$('noBle').style.display='block';$('main').style.display='none';return;}
+  buildPinUI();
+  for(let i=0;i<4;i++)refreshPin(i);
+  channelsChanged();
+})();
+</script>
+</body>
+</html>
