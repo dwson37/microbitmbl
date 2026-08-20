@@ -175,6 +175,11 @@ td:first-child,th:first-child{text-align:left}
 .mstate.hit{background:#FBE7EF;border-color:var(--magenta);color:var(--magenta)}
 .mstate.move{background:var(--teal-soft);border-color:var(--teal);color:var(--teal)}
 
+.flowwarn{background:#FBE7EF;border:1.5px solid var(--magenta);color:var(--magenta);
+  border-radius:var(--r);padding:9px 13px;font-size:13px;font-weight:700}
+.gatepanel{background:var(--teal-soft);border:1.5px solid var(--teal);
+  border-radius:var(--r);padding:9px 13px;font-size:13px}
+
 /* ── 시뮬레이터 바 ── */
 #simBar{display:none;align-items:center;gap:14px;flex-wrap:wrap;padding:8px 12px;
   background:#FFF6E4;border-bottom:1.5px solid var(--amber)}
@@ -224,6 +229,8 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
     <div class="simctl"><label>스윙 세기</label>
       <input type="range" id="simPower" min="2200" max="8000" step="100" value="6500"><span class="num" id="simPowerV">6500mg</span></div>
     <button id="simJump" style="min-width:150px">점프 (길게 누르기)</button>
+    <button id="simDrop" style="min-width:96px">방울 1개</button>
+    <button id="simFall" style="min-width:110px">낙하 테스트</button>
   </div>
 
   <div id="noBle">
@@ -286,6 +293,8 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
 
     <!-- ═════ 측정 화면 ═════ -->
     <div class="view sel" id="v_measure">
+      <div id="flowWarn" class="flowwarn" style="display:none"></div>
+      <div id="gatePanel" class="gatepanel" style="display:none"></div>
       <div id="vals"></div>
       <div id="motionBox" style="display:none">
         <canvas id="motionCv"></canvas>
@@ -404,8 +413,13 @@ const PROFILES={
         return x2===x1?NaN:y1+(r-x1)*(y2-y1)/(x2-x1);}},
     {id:'lin', name:'사용자 수식  y = ax+b', unit:'', conv:(r,o)=>(o.a??1)*r+(o.b??0)},
   ],
-  T:[{id:'ds',name:'DS18B20 온도',unit:'°C',conv:(r,o)=>r+(o.off||0)}]
+  T:[{id:'ds',name:'DS18B20 온도',unit:'°C',conv:(r,o)=>r+(o.off||0)}],
+  P:[
+    {id:'gate',name:'광문 통과'},
+    {id:'drop',name:'방울 계수'},
+  ]
 };
+const wrapUs=d=>d<0?d+4294967296:d;      // 32비트 µs 되돌림 보정
 
 // ─────────── 상태 ───────────
 const S={
@@ -422,12 +436,78 @@ const S={
   rateMs:500,data:[],markers:[],maxRows:20000,
   gMode:'time',xCh:'p1',yCh:'p2',analyze:false,aPts:[],
   wakeLock:null,clockOffset:0,   // 기기시각 = 웹시각 + clockOffset
+  gate:{last:{},vlog:[]},        // last[pin]={us,ms} 광문 최근 이벤트, vlog=속력 기록
+  flow:{},                       // 핀별 연속 차단 경고 상태
   pingSent:0,pingCb:null,
 };
 const $=id=>document.getElementById(id);
 const enc=new TextEncoder(),dec=new TextDecoder();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const round4=v=>Math.round(v*1e4)/1e4;
+
+/* ── 포토 인터럽터 이벤트 ── */
+function onGateEvent(pin,ms,us,count){
+  if(isNaN(pin)||pin<1||pin>4) return;
+  const i=pin-1,p=S.pins[i];
+  if(p.mode!=='P') return;
+  if(p.profile==='drop'){
+    // 방울: D 라인의 누적값으로 그래프가 그려지므로 현재값만 갱신
+    if(S.last){ S.last['p'+pin]=count; updateVals(S.last); }
+    return;
+  }
+  // 광문: 위치순 직전 핀의 최근 이벤트와 짝지어 속력 계산
+  const g=gatePins(), idx=g.findIndex(x=>x.i===i);
+  S.gate.last[i]={us,ms,count};
+  if(idx<=0) return;                                  // 첫 광문은 짝 없음
+  const prev=S.gate.last[g[idx-1].i];
+  if(!prev) return;
+  const dtUs=wrapUs(us-prev.us);
+  if(dtUs<=0||dtUs>5e6) return;                       // 5초 초과면 별개 사건
+  const distM=(g[idx].pos-g[idx-1].pos)/100;          // cm → m
+  const v=round4(distM/(dtUs/1e6));                   // m/s
+  const row={t:ms/1000,marker:''};
+  row['gv'+idx]=v;
+  row.gx=g[idx].pos;
+  // 가속도: 직전 구간 속력이 있으면 (v2-v1)/Δt (Δt = 두 구간 중간시각 차 ≈ (t1+t2)/2)
+  const vl=S.gate.vlog;
+  vl.push({seg:idx,v,us,dtUs});
+  if(vl.length>12) vl.shift();
+  const pv=vl.slice(0,-1).reverse().find(x=>x.seg===idx-1);
+  if(pv&&wrapUs(us-pv.us)<5e6){
+    const dtMid=(pv.dtUs+dtUs)/2/1e6;
+    row.ga=round4((v-pv.v)/dtMid);
+    showGatePanel(v,row.ga);
+  }else showGatePanel(v,null);
+  addRow(row);
+}
+function onFlowWarn(pin,state){
+  if(state==='FLOW'){
+    S.flow[pin]=true;
+    $('flowWarn').style.display='block';
+    $('flowWarn').textContent=`⚠ P${pin} 빔이 계속 차단되어 있습니다 — 뷰렛 꼭지를 잠그거나 정렬을 확인하세요`;
+    SFX.init&&SFX.thud();
+  }else{
+    delete S.flow[pin];
+    if(!Object.keys(S.flow).length) $('flowWarn').style.display='none';
+  }
+}
+function showGatePanel(v,a){
+  const el=$('gatePanel'); el.style.display='block';
+  let h=`<b>최근 통과</b> &nbsp;속력 <b>${v.toFixed(3)} m/s</b>`;
+  if(a!=null){
+    const err=((Math.abs(a)-9.8)/9.8*100);
+    h+=` · 가속도 <b>${a.toFixed(2)} m/s²</b> <span style="color:${Math.abs(err)<10?'var(--ok)':'var(--amber)'}">(g 대비 ${err>0?'+':''}${err.toFixed(1)}%)</span>`;
+  }
+  el.innerHTML=h;
+}
+/* 행 추가 공통 (D 라인 처리와 동일한 규칙) */
+function addRow(row){
+  if(S.frozen) return;
+  if(S.running&&S.data.length>=S.maxRows) return;
+  S.data.push(row);
+  if(!S.running&&S.data.length>S.PREVIEW_MAX) S.data.shift();
+  pushChart(row); pushTable(row);
+}
 const fmt=v=>Math.abs(v)>=100?v.toFixed(1):v.toFixed(2);
 
 // ─────────── BLE ───────────
@@ -465,8 +545,9 @@ async function send(l){
   if(!S.wc)return; try{await S.wc.writeValue(enc.encode(l+'\n'));}catch(e){}
 }
 
+const fwMode=m=>m==='P'?'E':m;          // 웹앱 P(포토) → 펌웨어 E(엣지)
 async function pushAll(){
-  for(let i=0;i<4;i++){ await send(`M,${i+1},${S.pins[i].mode}`); await sleep(55); }
+  for(let i=0;i<4;i++){ await send(`M,${i+1},${fwMode(S.pins[i].mode)}`); await sleep(55); }
   for(const [c,on] of Object.entries(S.fixed)){
     if(c==='alt')continue; await send(`E,${c},${on?1:0}`); await sleep(55);
   }
@@ -502,6 +583,8 @@ function parseLine(line){
   const f=line.split(',');
   if(f[0]==='PONG'){ const t=parseFloat(f[1]); if(S.pingCb&&!isNaN(t)){const cb=S.pingCb;S.pingCb=null;cb(t);} return; }
   if(f[0]==='I'){ if(f[3]) $('devName').textContent=f[3]; return; }
+  if(f[0]==='G'){ onGateEvent(parseInt(f[1]),parseInt(f[2]),parseFloat(f[3]),parseInt(f[4])); return; }
+  if(f[0]==='W'){ onFlowWarn(parseInt(f[1]),f[2]); return; }
   if(f[0]!=='D') return;
 
   const ms=parseInt(f[1]); if(isNaN(ms)) return;
@@ -529,6 +612,10 @@ function parseLine(line){
       const pr=PROFILES.A.find(x=>x.id===p.profile)||PROFILES.A[0];
       row[id]=round4(pr.conv(row[id],p.opts));
     } else if(p.mode==='T') row[id]=round4(row[id]+(p.opts.off||0));
+    else if(p.mode==='P'&&p.profile==='drop'){
+      const per=(p.opts.ml&&p.opts.drops)?p.opts.ml/p.opts.drops:0;
+      row[id+'v']=per?round4(row[id]*per):null;
+    }
   }
   if(S.running&&S.data.length>=S.maxRows){
     if(S.data.length===S.maxRows){S.data.push(row);alert('데이터 상한('+S.maxRows+'행)에 도달했습니다. CSV로 저장 후 리셋하세요.');}
@@ -536,22 +623,36 @@ function parseLine(line){
   }
   S.last=row;
   updateVals(row);
-  // 기록 정지 후에는 기록된 데이터를 보존하기 위해 더 쌓지 않는다
-  if(S.frozen) return;
-  S.data.push(row);
-  if(!S.running&&S.data.length>S.PREVIEW_MAX) S.data.shift();   // 미리보기는 최근분만
-  pushChart(row); pushTable(row);
+  addRow(row);
 }
 
 // ─────────── 채널 목록 ───────────
+function gatePins(){          // 광문 핀을 위치 오름차순으로
+  const g=[];
+  for(let i=0;i<4;i++) if(S.pins[i].mode==='P'&&S.pins[i].profile==='gate')
+    g.push({i,pos:S.pins[i].opts.pos||0});
+  return g.sort((a,b)=>a.pos-b.pos);
+}
 function activeChannels(){
   const out=[];
   for(let i=0;i<4;i++){
     const p=S.pins[i]; if(p.mode==='X') continue;
+    if(p.mode==='P'){
+      if(p.profile==='drop'){
+        out.push({id:'p'+(i+1),name:`P${i+1} 방울수`,unit:'개'});
+        out.push({id:'p'+(i+1)+'v',name:`P${i+1} 부피`,unit:'mL'});
+      }else out.push({id:'p'+(i+1),name:`P${i+1} 통과`,unit:'회'});
+      continue;
+    }
     let unit='°C';
     if(p.mode==='A') unit=(PROFILES.A.find(x=>x.id===p.profile)||{}).unit||'';
     out.push({id:'p'+(i+1),name:pinLabel(i),unit});
   }
+  const g=gatePins();
+  for(let k=1;k<g.length;k++)
+    out.push({id:'gv'+k,name:`구간${k} 속력 (P${g[k-1].i+1}→P${g[k].i+1})`,unit:'m/s'});
+  if(g.length>=3) out.push({id:'ga',name:'가속도',unit:'m/s²'});
+  if(g.length>=2) out.push({id:'gx',name:'통과 위치',unit:'cm'});
   for(const ch of CH){ if(!ch.pin&&S.fixed[ch.id]) out.push({id:ch.id,name:ch.name,unit:ch.unit||''}); }
   return out;
 }
@@ -1305,7 +1406,8 @@ function buildPinUI(){
         <select data-pin="${i}" data-k="mode">
           <option value="X">사용 안 함</option>
           <option value="A">아날로그 센서</option>
-          <option value="T">DS18B20 온도</option></select></div>
+          <option value="T">DS18B20 온도</option>
+          <option value="P">포토 인터럽터 SEN030111</option></select></div>
       <div class="r1" data-profrow="${i}" style="display:none">
         <span class="pinname"></span><select data-pin="${i}" data-k="profile"></select></div>
       <div class="opts" data-optrow="${i}"></div>`;
@@ -1315,9 +1417,9 @@ function buildPinUI(){
     const el=e.target,pin=parseInt(el.dataset.pin); if(isNaN(pin))return;
     if(el.dataset.k==='mode'){
       S.pins[pin].mode=el.value;
-      S.pins[pin].profile=el.value==='T'?'ds':'raw';
+      S.pins[pin].profile=el.value==='T'?'ds':el.value==='P'?'gate':'raw';
       S.pins[pin].opts={}; refreshPin(pin);
-      if(S.connected)send(`M,${pin+1},${el.value}`);
+      if(S.connected)send(`M,${pin+1},${fwMode(el.value)}`);
     }else if(el.dataset.k==='profile'){
       S.pins[pin].profile=el.value;S.pins[pin].opts={};refreshOpts(pin);
     }
@@ -1330,9 +1432,10 @@ function buildPinUI(){
 }
 function refreshPin(i){
   const row=document.querySelector(`[data-profrow="${i}"]`),sel=row.querySelector('select');
-  if(S.pins[i].mode==='A'){
+  const m=S.pins[i].mode;
+  if(m==='A'||m==='P'){
     row.style.display='flex';
-    sel.innerHTML=PROFILES.A.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    sel.innerHTML=PROFILES[m].map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
     sel.value=S.pins[i].profile;
   } else row.style.display='none';
   refreshOpts(i);
@@ -1347,8 +1450,42 @@ function refreshOpts(i){
     else if(p.profile==='cal2')box.innerHTML=f('x1','원시1',0)+f('y1','값1',0)+f('x2','원시2',1023)+f('y2','값2',100);
     else if(p.profile==='lin')box.innerHTML=f('a','a',1)+f('b','b',0);
   } else if(p.mode==='T') box.innerHTML=f('off','오프셋 °C',0);
+  else if(p.mode==='P'){
+    if(p.profile==='gate'){
+      box.innerHTML=f('pos','위치 cm',i*30)+
+        `<span class="hint" style="flex-basis:100%">낙하 방향으로 증가. ±1mm 오차 → 속력 약 ±0.3~0.5% (구간이 짧을수록 커짐)</span>`;
+    }else{
+      box.innerHTML=f('ml','보정 mL',10)+f('drops','방울 개',200)+
+        `<button data-cal="${i}" style="min-height:40px;padding:0 12px">보정 시작</button>`+
+        `<span class="hint" style="flex-basis:100%">적정에 쓸 용액으로 보정하세요. 방울당 부피 = mL ÷ 개</span>`;
+    }
+  }
   box.querySelectorAll('input').forEach(el=>{S.pins[i].opts[el.dataset.opt]=parseFloat(el.value);});
 }
+
+// ── 방울 보정 도우미: 시작 시점 카운트를 기억했다가 완료 시 개수 자동 기입
+const CAL={active:-1,startCount:0};
+$('pinList').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-cal]'); if(!btn)return;
+  const i=parseInt(btn.dataset.cal);
+  if(CAL.active===i){                        // 완료
+    const now=S.last?.['p'+(i+1)]??0;
+    const n=Math.max(0,now-CAL.startCount);
+    const inp=document.querySelector(`[data-optrow="${i}"] [data-opt="drops"]`);
+    if(inp){inp.value=n;S.pins[i].opts.drops=n;}
+    CAL.active=-1;btn.textContent='보정 시작';
+    if(n<30)alert('방울 수가 '+n+'개로 너무 적습니다. 최소 30개 이상 받아 다시 보정하세요.');
+    else{
+      const per=(S.pins[i].opts.ml||10)/n;
+      if(per<0.02||per>0.10)alert(`방울당 ${per.toFixed(3)}mL — 일반 범위(0.02~0.10)를 벗어났습니다. mL 입력을 확인하세요.`);
+      channelsChanged();
+    }
+  }else{                                     // 시작
+    if(!S.connected){alert('기기를 먼저 연결하세요.');return;}
+    CAL.active=i;CAL.startCount=S.last?.['p'+(i+1)]??0;
+    btn.textContent='보정 완료';
+  }
+});
 function channelsChanged(){ rebuildVals();rebuildXY();rebuildChart();rebuildTable(); }
 function rebuildXY(){
   const chs=activeChannels(),o=chs.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
@@ -1402,7 +1539,8 @@ $('btnStart').onclick=async()=>{
   if(!S.running){
     if(!activeChannels().length){alert('활성화된 채널이 없습니다. 왼쪽 패널에서 센서를 설정하세요.');return;}
     S.data=[];S.markers=[];S.aPts=[];$('analyzeOut').style.display='none';
-    S.frozen=false; rebuildChart();rebuildTable();
+    S.frozen=false;S.gate.last={};S.gate.vlog=[];$('gatePanel').style.display='none';
+    rebuildChart();rebuildTable();
     S.running=true;await send('Z');await sleep(80);await send('G,1');
     setRunUI(true);await acquireWake();
   }else{
@@ -1418,6 +1556,7 @@ $('btnMark').onclick=()=>{
 $('btnReset').onclick=async()=>{
   if(S.data.length&&!confirm('측정 데이터를 모두 지울까요?'))return;
   S.data=[];S.markers=[];S.aPts=[];S.frozen=false;$('analyzeOut').style.display='none';
+  S.gate.last={};S.gate.vlog=[];$('gatePanel').style.display='none';
   await send('Z');rebuildChart();rebuildTable();rebuildVals();
 };
 $('btnCsv').onclick=saveCsv;
@@ -1594,7 +1733,7 @@ $('btnAxyz').onclick=()=>{
    ══════════════════════════════════════════ */
 const SIM={
   on:false, timer:0, boot:0, t0:0, rate:500, fast:false,
-  pins:['X','X','X','X'], swingTh:2200,
+  pins:['X','X','X','X'], swingTh:2200, edgeCount:[0,0,0,0],
   ch:{dist:0,prs:0,bt:0,lgt:0,snd:0,acc:0,mag:0,accx:0,accy:0,accz:0},
   pendSwing:null, pendAir:0, landing:0, jumpDown:0,
   LAT_MIN:30, LAT_MAX:80,          // BLE 지연 모사(ms)
@@ -1645,7 +1784,7 @@ const SIM={
     else if(c==='R'){ const r=parseInt(p[1]); if(!isNaN(r)){ this.rate=Math.max(100,r); this.restart(); } }
     else if(c==='F'){ const t=parseInt(p[1]); if(!isNaN(t)) this.swingTh=t; }
     else if(c==='G'){ if(p[1]==='1') this.t0=this.now(); }   // 전송은 항상 계속
-    else if(c==='Z'){ this.t0=this.now(); }
+    else if(c==='Z'){ this.t0=this.now(); this.edgeCount=[0,0,0,0]; }
     // B / V / T / ID 는 소리 명령이므로 무시
   },
 
@@ -1664,6 +1803,7 @@ const SIM={
     // P1~P4
     for(let i=0;i<4;i++){
       const m=this.pins[i];
+      if(m==='E'){ f.push(''+(this.edgeCount[i]||0)); continue; }
       if(m==='A'){
         // 완만한 곡선 + 잡음 (핀마다 위상을 달리해 구분되게)
         const v=512+300*Math.sin(t/6+i*1.7)+n(12);
@@ -1717,6 +1857,31 @@ const SIM={
     this.emit(f.join(','));
   },
 
+  /* 포토 인터럽터 이벤트 발생 (us는 성능시계 기반 모사) */
+  fireEdge(i,usOverride){
+    if(this.pins[i]!=='E') return;
+    this.edgeCount[i]++;
+    const ms=this.now()-this.t0;
+    const us=usOverride!=null?Math.round(usOverride):Math.round(performance.now()*1000)%4294967296;
+    this.emit(`G,${i+1},${ms},${us},${this.edgeCount[i]}`);
+  },
+  // 방울 모드 핀 전부에 1방울
+  dropOnce(){
+    for(let i=0;i<4;i++)
+      if(this.pins[i]==='E'&&S.pins[i].profile==='drop') this.fireEdge(i);
+  },
+  // 광문 핀들에 자유낙하 시각(g=9.8, 첫 센서 5cm 위에서 낙하) 이벤트
+  freeFall(){
+    const g=gatePins().filter(x=>this.pins[x.i]==='E');
+    if(g.length<2){alert('광문 모드 핀이 2개 이상 필요합니다.');return;}
+    const h0=0.05, base=performance.now()*1000;
+    for(const gp of g){
+      const h=h0+gp.pos/100;
+      const tUs=Math.sqrt(2*h/9.8)*1e6;
+      setTimeout(()=>this.fireEdge(gp.i,(base+tUs)%4294967296), tUs/1000);
+    }
+  },
+
   /* 게임 입력 */
   swing(){
     if(!this.on) return;
@@ -1730,6 +1895,8 @@ const SIM={
 
 // 시뮬레이터 조작 연결
 $('btnSim').onclick=()=>SIM.toggle();
+$('simDrop').onclick=()=>SIM.dropOnce();
+$('simFall').onclick=()=>SIM.freeFall();
 $('simRoll').oninput =e=>$('simRollV').textContent=e.target.value+'°';
 $('simPitch').oninput=e=>$('simPitchV').textContent=e.target.value+'°';
 $('simPower').oninput=e=>$('simPowerV').textContent=e.target.value+'mg';
