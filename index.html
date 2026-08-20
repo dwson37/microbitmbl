@@ -54,6 +54,9 @@ header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(-
 #dot{width:10px;height:10px;border-radius:50%;background:#C3CCC7}
 #dot.on{background:var(--ok);box-shadow:0 0 0 4px rgba(46,139,87,.18)}
 #devName{font-size:13px;color:var(--ink-dim);font-weight:700;letter-spacing:1px}
+.recbadge{font-size:11px;font-weight:800;padding:3px 9px;border-radius:20px;
+  border:1.5px solid var(--line);color:var(--ink-dim);background:var(--paper)}
+.recbadge.rec{border-color:var(--magenta);color:#fff;background:var(--magenta)}
 .spacer{flex:1}
 /* 모드 탭 */
 #tabs{display:flex;gap:4px;background:var(--paper);border:1.5px solid var(--line);
@@ -127,12 +130,29 @@ td:first-child,th:first-child{text-align:left}
   padding:7px 14px;min-width:96px}
 .gstat .n{font-size:11px;color:var(--ink-dim);font-weight:700}
 .gstat .v{font-size:23px;font-weight:800}
-#hrLog,#jpLog{max-height:132px;overflow-y:auto;background:var(--card);
-  border:1.5px solid var(--line);border-radius:var(--r);padding:4px}
-.logrow{display:flex;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:13px}
+
+/* 스테이지 + 우측 기록 패널 */
+.gmain{flex:1;display:flex;gap:10px;min-height:0}
+.gmain .gstage{flex:1;min-width:0}
+.gside{width:266px;flex:0 0 auto;display:flex;flex-direction:column;min-height:0;
+  background:var(--card);border:1.5px solid var(--line);border-radius:var(--r);overflow:hidden}
+.gside-h{padding:9px 13px;font-size:12px;font-weight:800;letter-spacing:.6px;
+  color:var(--teal);border-bottom:1.5px solid var(--line);background:var(--paper)}
+.loglist{flex:1;overflow-y:auto;padding:5px}
+.logempty{padding:22px 12px;text-align:center;color:var(--ink-dim);font-size:13px}
+.logrow{padding:8px 10px;border-bottom:1px solid var(--line)}
 .logrow:last-child{border-bottom:none}
-.logrow .idx{width:34px;color:var(--ink-dim);font-weight:700}
-.logrow .tag{font-weight:700;width:64px}
+.lr-top{display:flex;align-items:baseline;gap:8px}
+.lr-top .idx{color:var(--ink-dim);font-weight:800;font-size:12px;width:30px;flex:0 0 auto}
+.lr-top .tag{font-weight:800;font-size:14px;flex:1;min-width:0}
+.lr-top .amt{font-weight:800;font-size:17px;flex:0 0 auto}
+.lr-bot{margin-top:3px;font-size:11.5px;color:var(--ink-dim);line-height:1.45}
+
+/* 좁은 화면(세로 태블릿)에서는 기록을 아래로 */
+@media (max-width:860px){
+  .gmain{flex-direction:column}
+  .gside{width:auto;max-height:152px}
+}
 .t-perfect{color:var(--magenta)} .t-good{color:var(--teal)}
 .t-weak{color:var(--amber)} .t-miss{color:var(--ink-dim)}
 
@@ -155,6 +175,20 @@ td:first-child,th:first-child{text-align:left}
 .mstate.hit{background:#FBE7EF;border-color:var(--magenta);color:var(--magenta)}
 .mstate.move{background:var(--teal-soft);border-color:var(--teal);color:var(--teal)}
 
+/* ── 시뮬레이터 바 ── */
+#simBar{display:none;align-items:center;gap:14px;flex-wrap:wrap;padding:8px 12px;
+  background:#FFF6E4;border-bottom:1.5px solid var(--amber)}
+#simBar.on{display:flex}
+.simbadge{font-size:12px;font-weight:800;color:var(--amber);
+  border:1.5px solid var(--amber);border-radius:20px;padding:4px 11px;background:#fff}
+.simctl{display:flex;align-items:center;gap:7px}
+.simctl label{font-size:12px;font-weight:700;white-space:nowrap}
+.simctl input[type=range]{width:112px;min-height:38px;accent-color:var(--amber)}
+.simctl .num{font-size:12px;font-weight:800;width:58px;text-align:right}
+#simJump{min-height:40px;background:var(--amber);border-color:var(--amber);color:#fff}
+#simJump.press{background:var(--magenta);border-color:var(--magenta)}
+body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
+
 #noBle{display:none;padding:40px;text-align:center;line-height:1.9}
 #noBle h2{color:var(--magenta)}
 .notice{background:var(--teal-soft);border:1.5px solid var(--teal);border-radius:var(--r);
@@ -168,8 +202,10 @@ td:first-child,th:first-child{text-align:left}
     <div class="brand">MBL <span>계측기</span></div>
     <div id="dot"></div>
     <span id="devName">미연결</span>
+    <span id="recBadge" class="recbadge">대기</span>
     <button id="btnConn" class="primary">연결</button>
     <button id="btnIdent" disabled>♪</button>
+    <button id="btnSim">시뮬레이터</button>
     <input id="teamName" type="text" placeholder="조 이름" style="width:104px">
     <div class="spacer"></div>
     <div id="tabs">
@@ -178,6 +214,17 @@ td:first-child,th:first-child{text-align:left}
       <button data-view="jump">점프</button>
     </div>
   </header>
+
+  <div id="simBar">
+    <span class="simbadge">모의 모드 — 실제 기기가 연결되어 있지 않습니다</span>
+    <div class="simctl"><label>좌우 기울기</label>
+      <input type="range" id="simRoll" min="-90" max="90" value="0"><span class="num" id="simRollV">0°</span></div>
+    <div class="simctl"><label>앞뒤 기울기</label>
+      <input type="range" id="simPitch" min="-90" max="90" value="0"><span class="num" id="simPitchV">0°</span></div>
+    <div class="simctl"><label>스윙 세기</label>
+      <input type="range" id="simPower" min="2200" max="8000" step="100" value="6500"><span class="num" id="simPowerV">6500mg</span></div>
+    <button id="simJump" style="min-width:150px">점프 (길게 누르기)</button>
+  </div>
 
   <div id="noBle">
     <h2>이 브라우저에서는 사용할 수 없습니다</h2>
@@ -259,7 +306,7 @@ td:first-child,th:first-child{text-align:left}
       </div>
       <div id="chartBox"><canvas id="chart"></canvas><div id="analyzeOut"></div></div>
       <div id="ctrl">
-        <button id="btnStart" class="primary" disabled>측정 시작</button>
+        <button id="btnStart" class="primary" disabled>기록 시작</button>
         <button id="btnMark" disabled>마커</button>
         <button id="btnReset" disabled>리셋</button>
         <button id="btnMotion">모션 보기</button>
@@ -281,9 +328,14 @@ td:first-child,th:first-child{text-align:left}
           <div class="gstat"><div class="n">안타</div><div class="v num" id="hrHit">0</div></div>
           <div class="gstat"><div class="n">최장 타구</div><div class="v num"><span id="hrBest">0</span>m</div></div>
         </div>
-        <div class="gstage"><canvas id="hrCanvas"></canvas><div class="gmsg" id="hrMsg">
-          <div class="big">홈런더비</div><div class="sub">기기를 연결하고 경기 시작을 누르세요</div></div></div>
-        <div id="hrLog"></div>
+        <div class="gmain">
+          <div class="gstage"><canvas id="hrCanvas"></canvas><div class="gmsg" id="hrMsg">
+            <div class="big">홈런더비</div><div class="sub">기기를 연결하고 경기 시작을 누르세요</div></div></div>
+          <aside class="gside">
+            <div class="gside-h">타격 기록</div>
+            <div id="hrLog" class="loglist"><div class="logempty">아직 기록이 없습니다</div></div>
+          </aside>
+        </div>
       </div>
     </div>
 
@@ -298,9 +350,14 @@ td:first-child,th:first-child{text-align:left}
           <div class="gstat"><div class="n">체공시간</div><div class="v num"><span id="jpAir">0</span>s</div></div>
           <div class="gstat"><div class="n">최고 기록</div><div class="v num"><span id="jpBest">0</span>cm</div></div>
         </div>
-        <div class="gstage"><canvas id="jpCanvas"></canvas><div class="gmsg" id="jpMsg">
-          <div class="big">점프 높이</div><div class="sub">기기를 연결하고 측정 시작을 누르세요</div></div></div>
-        <div id="jpLog"></div>
+        <div class="gmain">
+          <div class="gstage"><canvas id="jpCanvas"></canvas><div class="gmsg" id="jpMsg">
+            <div class="big">점프 높이</div><div class="sub">기기를 연결하고 측정 시작을 누르세요</div></div></div>
+          <aside class="gside">
+            <div class="gside-h">점프 기록</div>
+            <div id="jpLog" class="loglist"><div class="logempty">아직 기록이 없습니다</div></div>
+          </aside>
+        </div>
       </div>
     </div>
   </div>
@@ -353,7 +410,10 @@ const PROFILES={
 // ─────────── 상태 ───────────
 const S={
   dev:null,wc:null,nc:null,connected:false,devName:'',
-  running:false,buf:'',view:'measure',
+  running:false,          // = 기록(recording) 중 여부
+  buf:'',view:'measure',
+  PREVIEW_MAX:300,        // 기록 전 미리보기 유지 행 수
+  frozen:false,           // 기록 정지 후 = 기록분 보존(추가 저장 안 함)
   pins:[{mode:'X',profile:'raw',opts:{}},{mode:'X',profile:'raw',opts:{}},
         {mode:'X',profile:'raw',opts:{}},{mode:'X',profile:'raw',opts:{}}],
   fixed:{dist:false,prs:false,bt:false,alt:false,lgt:false,snd:false,acc:false,mag:false,
@@ -396,8 +456,14 @@ function onDisc(){
   setConnUI(false);setRunUI(false);
   HR.stop(); JP.stop();
 }
-const disconnect=()=>{ if(S.dev?.gatt.connected) S.dev.gatt.disconnect(); };
-async function send(l){ if(!S.wc)return; try{await S.wc.writeValue(enc.encode(l+'\n'));}catch(e){} }
+const disconnect=()=>{
+  if(SIM.on){ SIM.off(); return; }
+  if(S.dev?.gatt.connected) S.dev.gatt.disconnect();
+};
+async function send(l){
+  if(SIM.on){ SIM.cmd(l); return; }
+  if(!S.wc)return; try{await S.wc.writeValue(enc.encode(l+'\n'));}catch(e){}
+}
 
 async function pushAll(){
   for(let i=0;i<4;i++){ await send(`M,${i+1},${S.pins[i].mode}`); await sleep(55); }
@@ -443,7 +509,6 @@ function parseLine(line){
   // 게임 모드 처리
   if(HR.active){ HR.feed(f,ms); return; }
   if(JP.active){ JP.feed(f,ms); return; }
-  if(!S.running) return;
 
   const row={t:ms/1000,marker:''};
   for(const ch of CH){
@@ -465,12 +530,17 @@ function parseLine(line){
       row[id]=round4(pr.conv(row[id],p.opts));
     } else if(p.mode==='T') row[id]=round4(row[id]+(p.opts.off||0));
   }
-  if(S.data.length>=S.maxRows){
+  if(S.running&&S.data.length>=S.maxRows){
     if(S.data.length===S.maxRows){S.data.push(row);alert('데이터 상한('+S.maxRows+'행)에 도달했습니다. CSV로 저장 후 리셋하세요.');}
     return;
   }
   S.last=row;
-  S.data.push(row); updateVals(row); pushChart(row); pushTable(row);
+  updateVals(row);
+  // 기록 정지 후에는 기록된 데이터를 보존하기 위해 더 쌓지 않는다
+  if(S.frozen) return;
+  S.data.push(row);
+  if(!S.running&&S.data.length>S.PREVIEW_MAX) S.data.shift();   // 미리보기는 최근분만
+  pushChart(row); pushTable(row);
 }
 
 // ─────────── 채널 목록 ───────────
@@ -572,6 +642,7 @@ function pushChart(row){
   if(!chart)return;
   if(S.gMode==='time') activeChannels().forEach((ch,i)=>chart.data.datasets[i]?.data.push({x:row.t,y:row[ch.id]}));
   else if(ok(row[S.xCh])&&ok(row[S.yCh])) chart.data.datasets[0].data.push({x:row[S.xCh],y:row[S.yCh]});
+  if(!S.running) chart.data.datasets.forEach(d=>{ while(d.data.length>S.PREVIEW_MAX) d.data.shift(); });
   chart.update('none');
 }
 $('chart').addEventListener('click',ev=>{
@@ -633,6 +704,8 @@ function download(csv,tag){
 }
 function saveCsv(){
   if(!S.data.length){alert('저장할 데이터가 없습니다.');return;}
+  if(!S.running&&!S.frozen&&
+     !confirm(`기록 중이 아닙니다. 최근 ${S.data.length}행(실시간 미리보기)만 저장됩니다. 계속할까요?`))return;
   const chs=activeChannels();
   let csv='시간(s),'+chs.map(c=>c.name+(c.unit?`(${c.unit})`:'')).join(',')+',마커\n';
   for(const r of S.data)
@@ -654,6 +727,11 @@ const PITCHES=[
 ];
 const MOUND_M=18.44;
 const kmh=ms=>Math.round(MOUND_M/(ms/1000)*3.6);
+/* 타구 각도·구장 규격 */
+const FOUL_MS=230;                 // 이 시간차에서 파울 라인(±45°)에 닿는다
+const MAX_M=150;                   // 탑뷰에 담는 최대 거리(m) = 최대 비거리
+// 펜스까지 거리: 중견 118m → 좌우 파울 라인 100m
+const fenceM=a=>100+18*Math.cos(Math.abs(a)*Math.PI/90);
 
 /* ── 효과음 (Web Audio) ── */
 const SFX={
@@ -722,14 +800,15 @@ const HR={
   active:false,pitchNo:0,total:0,homers:0,hits:0,best:0,log:[],
   phase:'idle',          // idle | wind | fly | hit | result
   cur:null,releaseWeb:0,arriveDev:0,judged:false,raf:0,
-  hitAt:0,hitDir:0,hitDist:0,hitTag:'',windAt:0,
+  hitAt:0,hitAng:0,hitDist:0,hitTag:'',hitCls:'',windAt:0,
+  plots:[],              // 이번 경기의 모든 타구 (탑뷰 누적)
   TOTAL_PITCH:10,
 
   async start(){
     if(!S.connected)return;
     SFX.init();
-    this.pitchNo=0;this.total=0;this.homers=0;this.hits=0;this.best=0;this.log=[];
-    $('hrLog').innerHTML='';this.render();
+    this.pitchNo=0;this.total=0;this.homers=0;this.hits=0;this.best=0;this.log=[];this.plots=[];
+    this.renderLog();this.render();
     this.active=true;
     await send('E,fast,1'); await sleep(70);
     await send('R,100');    await sleep(70);
@@ -782,55 +861,53 @@ const HR={
   /* diff < 0 : 빠름(당겨치기, 좌측) / diff > 0 : 늦음(밀어치기, 우측) */
   judge(diff,peak){
     const ad=Math.abs(diff);
-    // 스윙 세기 → 파워 계수 (2200~8000mg)
-    const power=Math.min(1,Math.max(0,(peak-2200)/5800));
-    const dirN=Math.max(-1,Math.min(1,diff/260));      // -1(좌) ~ +1(우)
+    const power=Math.min(1,Math.max(0,(peak-2200)/5800));   // 스윙 세기 0~1
+    const dirN=Math.max(-1.25,Math.min(1.25,diff/FOUL_MS)); // ±1 = 파울 라인
+    const angDeg=dirN*45;                                    // 타구 각도(도)
     let tag,cls,dist=0,timing;
 
-    if(ad>320){                                        // 스윙이 너무 어긋남
-      tag='헛스윙';cls='t-miss';timing=1;
-    }else if(ad>230){                                  // 파울 영역
-      tag='파울';cls='t-weak';timing=0.15;dist=Math.round(20+power*25);
-    }else{
+    if(ad>320){ tag='헛스윙';cls='t-miss';timing=0; }
+    else{
       timing=ad<=60?1.0:ad<=150?0.78:0.45;
-      // 중앙에 가까울수록 비거리 이득
-      dist=Math.round((0.35+power*0.65)*timing*135);
-      if(dist>=110){tag='홈런';cls='t-perfect';}
-      else if(dist>=88){tag='2루타';cls='t-good';}
-      else if(dist>=58){tag='안타';cls='t-good';}
-      else {tag=diff<0?'뜬공 아웃':'땅볼 아웃';cls='t-weak';}
+      dist=Math.round((0.35+power*0.65)*timing*150);
+      if(Math.abs(angDeg)>45){ tag='파울';cls='t-weak'; }
+      else{
+        const fence=fenceM(angDeg);
+        if(dist>=fence){tag='홈런';cls='t-perfect';}
+        else if(dist>=fence*0.78){tag='2루타';cls='t-good';}
+        else if(dist>=fence*0.52){tag='안타';cls='t-good';}
+        else {tag=diff<0?'뜬공 아웃':'땅볼 아웃';cls='t-weak';}
+      }
     }
-
-    const field=ad>230?(diff<0?'좌측 파울':'우측 파울')
-              :(diff<-60?'좌익 방면':diff>60?'우익 방면':'중견 방면');
+    const field=Math.abs(angDeg)>45?(diff<0?'좌측 파울':'우측 파울')
+              :(angDeg<-15?'좌익 방면':angDeg>15?'우익 방면':'중견 방면');
 
     if(tag==='홈런'){this.homers++;this.hits++;}
     else if(tag==='2루타'||tag==='안타')this.hits++;
-    if(dist>this.best)this.best=dist;
-    this.total+=dist;
+    if(tag!=='파울'&&dist>this.best)this.best=dist;
+    if(tag!=='헛스윙')this.total+=dist;
 
-    // 효과음
     if(tag==='헛스윙') SFX.whoosh();
     else if(tag==='홈런'){ SFX.crack(1); setTimeout(()=>SFX.cheer(),150); }
     else if(tag==='파울'||tag.indexOf('아웃')>=0){ SFX.crack(power*0.5); setTimeout(()=>SFX.thud(),120); }
     else SFX.crack(power);
     send(tag==='홈런'?'T,1319,300':tag==='헛스윙'?'T,262,220':'T,784,150');
 
-    // 타구 애니메이션 시작
     this.phase='hit'; this.hitAt=performance.now();
-    this.hitDir=dirN; this.hitDist=dist; this.hitTag=tag;
+    this.hitAng=angDeg; this.hitDist=dist; this.hitTag=tag; this.hitCls=cls;
+    if(tag!=='헛스윙') this.plots.push({ang:angDeg,dist,tag,cls,no:this.pitchNo});
 
     this.log.unshift({no:this.pitchNo,pitch:this.cur.name,speed:kmh(this.cur.travel),
       tag,cls,dist,field,diff:Math.round(diff),peak:Math.round(peak)});
     this.renderLog(); this.render();
 
-    const wait=tag==='헛스윙'?900:1600;
+    const wait=tag==='헛스윙'?900:2000;
     setTimeout(()=>{
       if(!this.active)return;
       this.phase='result';
-      msg('hrMsg', tag==='홈런'?'홈런!':(dist>0?dist+'m':tag),
+      msg('hrMsg', tag==='홈런'?'홈런!':(tag==='헛스윙'?tag:dist+'m'),
           `${this.cur.name} ${kmh(this.cur.travel)}km/h · ${field} · ${diff>0?'늦음':'빠름'} ${Math.abs(Math.round(diff))}ms`);
-      setTimeout(()=>{ if(this.active)this.next(); },1300);
+      setTimeout(()=>{ if(this.active)this.next(); },1400);
     },wait);
   },
 
@@ -848,13 +925,17 @@ const HR={
     $('hrBest').textContent=this.best;
   },
   renderLog(){
+    if(!this.log.length){ $('hrLog').innerHTML='<div class="logempty">아직 기록이 없습니다</div>'; return; }
     $('hrLog').innerHTML=this.log.map(r=>
-      `<div class="logrow"><span class="idx">${r.no}구</span>
-       <span style="width:96px;color:var(--ink-dim)">${r.pitch} ${r.speed}km/h</span>
-       <span class="tag ${r.cls}" style="width:70px">${r.tag}</span>
-       <span class="num" style="width:52px">${r.dist}m</span>
-       <span style="width:72px;color:var(--ink-dim)">${r.field}</span>
-       <span class="num" style="color:var(--ink-dim)">${r.diff>0?'+':''}${r.diff}ms · ${r.peak}mg</span></div>`).join('');
+      `<div class="logrow">
+         <div class="lr-top">
+           <span class="idx">${r.no}구</span>
+           <span class="tag ${r.cls}">${r.tag}</span>
+           <span class="amt num ${r.cls}">${r.dist?r.dist+'m':'—'}</span>
+         </div>
+         <div class="lr-bot">${r.pitch} ${r.speed}km/h · ${r.field}<br>
+           ${r.diff>0?'늦음':'빠름'} ${Math.abs(r.diff)}ms · 세기 ${r.peak}mg</div>
+       </div>`).join('');
   },
 
   /* ── 타석 시점 렌더링 ── */
@@ -867,6 +948,13 @@ const HR={
       const HZ=H*0.30;              // 지평선(펜스 밑단)
       const PY=H*0.93;              // 홈플레이트
       ctx.clearRect(0,0,W,H);
+
+      // 임팩트 이후에는 탑뷰로 즉시 전환
+      if(this.phase==='hit'||this.phase==='result'){
+        this.drawTop(ctx,W,H);
+        this.raf=requestAnimationFrame(draw);
+        return;
+      }
 
       // 하늘
       const sky=ctx.createLinearGradient(0,0,0,HZ);
@@ -912,7 +1000,6 @@ const HR={
       ctx.setLineDash([]);
 
       if(this.phase==='fly') this.drawIncoming(ctx,W,H,HZ,my,PY);
-      else if(this.phase==='hit') this.drawBatted(ctx,W,H,HZ,PY);
 
       this.raf=requestAnimationFrame(draw);
     };
@@ -955,28 +1042,116 @@ const HR={
     ctx.beginPath();ctx.arc(x-r*0.32,y,r*0.78,-0.95,0.95);ctx.stroke();
     if(p>=1&&!this.judged){ this.judged=true; this.judge(9999,2200); }
   },
-  drawBatted(ctx,W,H,HZ,PY){
-    const dur=this.hitTag==='헛스윙'?1:1500;
-    if(this.hitTag==='헛스윙')return;
-    const t=Math.min(1,(performance.now()-this.hitAt)/dur);
-    const reach=Math.min(1,this.hitDist/130);              // 비거리 → 도달 정도
-    const x=W/2+this.hitDir*W*0.62*t;
-    const yEnd=PY-(PY-HZ)*Math.max(0.15,reach);
-    const arc=H*(0.16+reach*0.22);
-    const y=PY-H*0.20+((yEnd-(PY-H*0.20))*t)-Math.sin(Math.PI*t)*arc;
-    const r=Math.max(2,H*0.055*(1-t*0.86));
-    // 궤적
-    ctx.strokeStyle='rgba(196,48,107,.35)';ctx.lineWidth=2;
-    ctx.beginPath();
-    for(let i=0;i<=20;i++){
-      const tt=t*i/20;
-      const xx=W/2+this.hitDir*W*0.62*tt;
-      const yy=PY-H*0.20+((yEnd-(PY-H*0.20))*tt)-Math.sin(Math.PI*tt)*arc;
-      i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);
+  /* ── 탑뷰: 임팩트 이후 비거리·방향을 정확한 축척으로 표시 ── */
+  drawTop(ctx,W,H){
+    const hx=W/2, hy=H*0.955;                       // 홈플레이트 위치
+    const sc=Math.min(H*0.88, W*0.60)/MAX_M;        // 1m 당 픽셀
+    const P=(a,d)=>[hx+Math.sin(a*Math.PI/180)*d*sc, hy-Math.cos(a*Math.PI/180)*d*sc];
+    const el=performance.now()-this.hitAt;
+
+    // 파울 지역
+    ctx.fillStyle='#E4E9E2'; ctx.fillRect(0,0,W,H);
+    // 페어 지역(잔디) — 펜스 곡선을 따라 채움
+    ctx.beginPath(); ctx.moveTo(hx,hy);
+    for(let a=-45;a<=45;a+=1.5){ const [x,y]=P(a,fenceM(a)); ctx.lineTo(x,y); }
+    ctx.closePath(); ctx.fillStyle='#5DA36B'; ctx.fill();
+    // 잔디 부채꼴 무늬
+    ctx.save(); ctx.clip();
+    ctx.fillStyle='rgba(255,255,255,.05)';
+    for(let a=-45;a<45;a+=7.5){
+      ctx.beginPath(); ctx.moveTo(hx,hy);
+      const [x1,y1]=P(a,MAX_M), [x2,y2]=P(a+3.75,MAX_M);
+      ctx.lineTo(x1,y1); ctx.lineTo(x2,y2); ctx.closePath(); ctx.fill();
     }
+    ctx.restore();
+    // 내야 흙
+    ctx.beginPath(); ctx.moveTo(hx,hy);
+    for(let a=-45;a<=45;a+=2){ const [x,y]=P(a,29); ctx.lineTo(x,y); }
+    ctx.closePath(); ctx.fillStyle='#C29A6B'; ctx.fill();
+    // 베이스 다이아몬드 (한 변 27.4m)
+    ctx.strokeStyle='rgba(255,255,255,.8)'; ctx.lineWidth=1.5;
+    const b1=P(-45,27.4), b2=P(0,38.8), b3=P(45,27.4);
+    ctx.beginPath(); ctx.moveTo(hx,hy);
+    ctx.lineTo(b1[0],b1[1]); ctx.lineTo(b2[0],b2[1]); ctx.lineTo(b3[0],b3[1]);
+    ctx.closePath(); ctx.stroke();
+    // 마운드
+    const md=P(0,18.44);
+    ctx.fillStyle='#B98F5F'; ctx.beginPath(); ctx.arc(md[0],md[1],2.7*sc,0,7); ctx.fill();
+
+    // 거리 눈금 호 (50m, 100m)
+    ctx.setLineDash([5,5]); ctx.lineWidth=1.5;
+    for(const d of [50,100]){
+      ctx.strokeStyle='rgba(255,255,255,.55)';
+      ctx.beginPath();
+      for(let a=-45;a<=45;a+=2){ const [x,y]=P(a,d); a===-45?ctx.moveTo(x,y):ctx.lineTo(x,y); }
+      ctx.stroke();
+      const [lx,ly]=P(-38,d);
+      ctx.fillStyle='rgba(255,255,255,.9)'; ctx.font='700 11px sans-serif';
+      ctx.fillText(d+'m',lx-2,ly-4);
+    }
+    ctx.setLineDash([]);
+    // 파울 라인
+    ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=2.5;
+    for(const a of [-45,45]){
+      const [x,y]=P(a,MAX_M);
+      ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(x,y); ctx.stroke();
+    }
+    // 펜스
+    ctx.strokeStyle='#2F6B4F'; ctx.lineWidth=4;
+    ctx.beginPath();
+    for(let a=-45;a<=45;a+=1.5){ const [x,y]=P(a,fenceM(a)); a===-45?ctx.moveTo(x,y):ctx.lineTo(x,y); }
     ctx.stroke();
-    ctx.fillStyle='#FFFFFF';ctx.strokeStyle='#C4306B';ctx.lineWidth=2;
-    ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();
+    // 방면 표시
+    ctx.fillStyle='rgba(255,255,255,.6)'; ctx.font='700 11px sans-serif'; ctx.textAlign='center';
+    [[-32,'좌익'],[0,'중견'],[32,'우익']].forEach(([a,t])=>{
+      const [x,y]=P(a,72); ctx.fillText(t,x,y);
+    });
+    ctx.textAlign='start';
+
+    // ── 이전 타구 누적 ──
+    for(const p of this.plots){
+      if(p===this.plots[this.plots.length-1]) continue;   // 현재 타구는 뒤에서 따로
+      this.drawShot(ctx,P,p,1,0.30);
+    }
+    // ── 현재 타구 (감속하며 날아감) ──
+    const cur=this.plots[this.plots.length-1];
+    if(cur){
+      const t=Math.min(1,el/1400);
+      const ease=1-Math.pow(1-t,2.2);                     // 공기저항으로 감속
+      this.drawShot(ctx,P,cur,ease,1);
+    }
+
+    // ── 임팩트 순간 플래시 (즉시 컷 전환) ──
+    if(el<170){
+      ctx.fillStyle=`rgba(255,255,255,${(1-el/170)*0.85})`;
+      ctx.fillRect(0,0,W,H);
+    }
+  },
+  /* 타구 하나를 그린다. prog=진행도(0~1), alpha=불투명도 */
+  drawShot(ctx,P,p,prog,alpha){
+    const col=p.tag==='홈런'?'#C4306B'
+             :p.tag==='2루타'||p.tag==='안타'?'#F2F7F3'
+             :p.tag==='파울'?'#D98A26':'#5B6B62';
+    const d=p.dist*prog;
+    const [x,y]=P(p.ang,d);
+    // 궤적
+    ctx.save(); ctx.globalAlpha=alpha;
+    ctx.strokeStyle=col; ctx.lineWidth=p.tag==='홈런'?3:2;
+    if(p.tag==='파울') ctx.setLineDash([4,4]);
+    const [hxx,hyy]=P(0,0);
+    ctx.beginPath(); ctx.moveTo(hxx,hyy); ctx.lineTo(x,y); ctx.stroke();
+    ctx.setLineDash([]);
+    // 낙구 지점
+    ctx.fillStyle=col; ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(x,y,alpha>0.9?6:4,0,7); ctx.fill(); ctx.stroke();
+    // 비거리 라벨 (현재 타구만)
+    if(alpha>0.9&&prog>0.55&&p.dist>0){
+      ctx.fillStyle='#16261F'; ctx.font='800 14px sans-serif';
+      ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=3;
+      const tx=x+(p.ang<0?-46:10), ty=y-11;
+      ctx.strokeText(p.dist+'m',tx,ty); ctx.fillText(p.dist+'m',tx,ty);
+    }
+    ctx.restore();
   },
 
   csv(){
@@ -999,7 +1174,7 @@ const JP={
   async start(){
     if(!S.connected)return;
     this.tries=0;this.best=0;this.log=[];this.airAccum=0;
-    $('jpLog').innerHTML='';this.render();
+    this.renderLog();this.render();
     this.active=true;
     await send('E,fast,1'); await sleep(70);
     await send('R,100');    await sleep(70);
@@ -1041,10 +1216,17 @@ const JP={
   },
   render(){ $('jpTry').textContent=this.tries; $('jpBest').textContent=this.best.toFixed(1); },
   renderLog(){
+    if(!this.log.length){ $('jpLog').innerHTML='<div class="logempty">아직 기록이 없습니다</div>'; return; }
+    const best=Math.max(...this.log.map(r=>r.h));
     $('jpLog').innerHTML=this.log.map(r=>
-      `<div class="logrow"><span class="idx">${r.no}회</span>
-       <span class="tag t-good num" style="width:72px">${r.h.toFixed(1)}cm</span>
-       <span class="num" style="color:var(--ink-dim)">체공 ${(r.air/1000).toFixed(2)}s · 착지 ${r.land}mg</span></div>`).join('');
+      `<div class="logrow">
+         <div class="lr-top">
+           <span class="idx">${r.no}회</span>
+           <span class="tag ${r.h>=best?'t-perfect':'t-good'}">${r.h>=best?'최고 기록':'점프'}</span>
+           <span class="amt num ${r.h>=best?'t-perfect':'t-good'}">${r.h.toFixed(1)}cm</span>
+         </div>
+         <div class="lr-bot">체공 ${(r.air/1000).toFixed(2)}초 · 착지 충격 ${r.land}mg</div>
+       </div>`).join('');
   },
   loop(){
     const cv=$('jpCanvas'),ctx=cv.getContext('2d');
@@ -1214,9 +1396,14 @@ $('chkAnalyze').onchange=e=>{S.analyze=e.target.checked;S.aPts=[];$('analyzeOut'
 $('btnStart').onclick=async()=>{
   if(!S.running){
     if(!activeChannels().length){alert('활성화된 채널이 없습니다. 왼쪽 패널에서 센서를 설정하세요.');return;}
+    S.data=[];S.markers=[];S.aPts=[];$('analyzeOut').style.display='none';
+    S.frozen=false; rebuildChart();rebuildTable();
     S.running=true;await send('Z');await sleep(80);await send('G,1');
     setRunUI(true);await acquireWake();
-  }else{ S.running=false;await send('G,0');setRunUI(false);releaseWake(); }
+  }else{
+    S.running=false;S.frozen=true;          // 기록분 보존
+    await send('G,0');setRunUI(false);releaseWake();
+  }
 };
 $('btnMark').onclick=()=>{
   if(!S.data.length)return;
@@ -1225,7 +1412,7 @@ $('btnMark').onclick=()=>{
 };
 $('btnReset').onclick=async()=>{
   if(S.data.length&&!confirm('측정 데이터를 모두 지울까요?'))return;
-  S.data=[];S.markers=[];S.aPts=[];$('analyzeOut').style.display='none';
+  S.data=[];S.markers=[];S.aPts=[];S.frozen=false;$('analyzeOut').style.display='none';
   await send('Z');rebuildChart();rebuildTable();rebuildVals();
 };
 $('btnCsv').onclick=saveCsv;
@@ -1243,9 +1430,13 @@ function setConnUI(on){
   $('btnConn').textContent=on?'해제':'연결';
   $('btnConn').classList.toggle('primary',!on);
   ['btnIdent','btnStart','btnMark','btnReset','hrStart','jpStart'].forEach(i=>$(i).disabled=!on);
+  if(!on){ $('recBadge').className='recbadge'; $('recBadge').textContent='대기'; }
+  else if(!S.running){ $('recBadge').textContent='실시간'; }
 }
 function setRunUI(r){
-  $('btnStart').textContent=r?'측정 정지':'측정 시작';
+  $('btnStart').textContent=r?'기록 정지':'기록 시작';
+  $('recBadge').className='recbadge'+(r?' rec':'');
+  $('recBadge').textContent=r?'기록 중':(S.frozen?'기록 보관':'실시간');
   $('btnStart').classList.toggle('stop',r);
   $('btnStart').classList.toggle('primary',!r);
 }
@@ -1389,6 +1580,173 @@ $('btnAxyz').onclick=()=>{
   $('btnAxyz').textContent=anyOff?'3축 한번에 끄기':'3축 한번에 켜기';
   channelsChanged();
 };
+
+
+/* ══════════════════════════════════════════
+   시뮬레이터 — 실물 기기 없이 웹앱 전체를 검증
+   가상 기기가 펌웨어와 동일한 형식의 D 라인을 만들어
+   실제와 같은 parseLine() 경로로 흘려보냅니다.
+   ══════════════════════════════════════════ */
+const SIM={
+  on:false, timer:0, boot:0, t0:0, rate:500, fast:false,
+  pins:['X','X','X','X'], swingTh:2200,
+  ch:{dist:0,prs:0,bt:0,lgt:0,snd:0,acc:0,mag:0,accx:0,accy:0,accz:0},
+  pendSwing:null, pendAir:0, landing:0, jumpDown:0,
+  LAT_MIN:30, LAT_MAX:80,          // BLE 지연 모사(ms)
+
+  now(){ return Math.round(performance.now()-this.boot); },   // 가상 기기 시각
+  emit(line){                                                  // 지연 후 전달
+    const d=this.LAT_MIN+Math.random()*(this.LAT_MAX-this.LAT_MIN);
+    setTimeout(()=>{ if(this.on) parseLine(line); },d);
+  },
+
+  toggle(){
+    if(this.on){ this.off(); return; }
+    if(S.connected){ alert('실제 기기 연결을 먼저 해제하세요.'); return; }
+    this.on=true; this.boot=performance.now(); this.t0=0;
+    S.connected=true; S.devName='시뮬레이터';
+    document.body.classList.add('simmode');
+    $('simBar').classList.add('on');
+    $('btnSim').classList.add('primary');
+    $('btnConn').disabled=true;
+    setConnUI(true);
+    $('devName').textContent='시뮬레이터';
+    this.restart();
+  },
+  off(){
+    this.on=false;
+    clearInterval(this.timer); this.timer=0;
+    S.connected=false;
+    document.body.classList.remove('simmode');
+    $('simBar').classList.remove('on');
+    $('btnSim').classList.remove('primary');
+    $('btnConn').disabled=false;
+    setConnUI(false); setRunUI(false);
+    HR.stop(); JP.stop(); S.running=false;
+  },
+
+  /* 웹앱이 보낸 명령을 펌웨어처럼 처리 */
+  cmd(line){
+    const p=line.split(','), c=p[0].toUpperCase();
+    if(c==='?') this.emit('I,MBL-SIM,1.2,simul');
+    else if(c==='P') this.emit('PONG,'+(this.now()-this.t0));
+    else if(c==='M'){ const i=parseInt(p[1]); if(i>=1&&i<=4) this.pins[i-1]=p[2]; }
+    else if(c==='E'){
+      const k=p[1], v=p[2]==='1'?1:0;
+      if(k==='fast') this.fast=!!v;
+      else if(k==='axyz'){ this.ch.accx=this.ch.accy=this.ch.accz=v; }
+      else if(k in this.ch) this.ch[k]=v;
+    }
+    else if(c==='R'){ const r=parseInt(p[1]); if(!isNaN(r)){ this.rate=Math.max(100,r); this.restart(); } }
+    else if(c==='F'){ const t=parseInt(p[1]); if(!isNaN(t)) this.swingTh=t; }
+    else if(c==='G'){ if(p[1]==='1') this.t0=this.now(); }   // 전송은 항상 계속
+    else if(c==='Z'){ this.t0=this.now(); }
+    // B / V / T / ID 는 소리 명령이므로 무시
+  },
+
+  restart(){
+    clearInterval(this.timer);
+    this.timer=setInterval(()=>this.tick(), this.rate);
+  },
+
+  /* 가상 센서값 생성 */
+  tick(){
+    if(!this.on) return;
+    const ms=this.now()-this.t0, t=ms/1000;
+    const n=(a)=>(Math.random()-0.5)*2*a;              // 잡음
+    const f=['D',''+ms];
+
+    // P1~P4
+    for(let i=0;i<4;i++){
+      const m=this.pins[i];
+      if(m==='A'){
+        // 완만한 곡선 + 잡음 (핀마다 위상을 달리해 구분되게)
+        const v=512+300*Math.sin(t/6+i*1.7)+n(12);
+        f.push(''+Math.round(Math.max(0,Math.min(1023,v))));
+      } else if(m==='T'){
+        // 지수 냉각 곡선: 80℃ → 20℃ (시상수 60초), 핀마다 조금 다르게
+        const T=20+(60-i*8)*Math.exp(-t/(60+i*25))+n(0.15);
+        f.push(''+(Math.round(T*10)/10));
+      } else f.push('');
+    }
+    // 고정 채널
+    f.push(this.ch.dist ? ''+Math.round(25+18*Math.sin(t/3)+n(0.6)) : '');
+    f.push(this.ch.prs  ? ''+(Math.round((1013.2+0.6*Math.sin(t/25)+n(0.05))*10)/10) : '');
+    f.push(this.ch.bt   ? ''+(Math.round((24+0.4*Math.sin(t/18)+n(0.05))*10)/10) : '');
+    f.push(this.ch.lgt  ? ''+Math.round(Math.max(0,120+60*Math.sin(t/7)+n(6))) : '');
+    f.push(this.ch.snd  ? ''+Math.round(Math.max(0,38+n(26))) : '');
+
+    // 가속도 — 슬라이더 기울기에서 중력 성분 계산
+    const roll=(+$('simRoll').value)*Math.PI/180;
+    const pitch=(+$('simPitch').value)*Math.PI/180;
+    let ax=Math.round(1000*Math.sin(roll)*Math.cos(pitch)+n(9));
+    let ay=Math.round(-1000*Math.sin(pitch)+n(9));
+    let az=Math.round(-1000*Math.cos(roll)*Math.cos(pitch)+n(9));
+
+    let accMax=0, freeMs=0, swT='', swP='';
+
+    // 점프: 체공 → 다음 패킷에서 착지 충격
+    if(this.pendAir>0){ freeMs=this.pendAir; this.pendAir=0; this.landing=1;
+                        ax=n(80); ay=n(80); az=n(80); }
+    else if(this.landing){ this.landing=0; accMax=3600+Math.round(n(500)); }
+
+    // 스윙: 탭한 시각과 세기를 그대로 전달
+    if(this.pendSwing){
+      swT=''+this.pendSwing.t; swP=''+this.pendSwing.peak;
+      accMax=Math.max(accMax,this.pendSwing.peak);
+      this.pendSwing=null;
+    }
+    const mag=Math.round(Math.sqrt(ax*ax+ay*ay+az*az));
+    if(!accMax) accMax=mag;
+
+    f.push(this.ch.acc ? ''+mag : '');
+    f.push(this.ch.mag ? ''+Math.round(48+n(4)) : '');
+    f.push(this.fast?''+accMax:'');
+    f.push(this.fast?''+freeMs:'');
+    f.push(this.fast?swT:'');
+    f.push(this.fast?swP:'');
+    f.push(this.ch.accx?''+ax:'');
+    f.push(this.ch.accy?''+ay:'');
+    f.push(this.ch.accz?''+az:'');
+
+    this.emit(f.join(','));
+  },
+
+  /* 게임 입력 */
+  swing(){
+    if(!this.on) return;
+    this.pendSwing={ t:this.now()-this.t0, peak:+$('simPower').value };
+  },
+  jump(ms){
+    if(!this.on) return;
+    this.pendAir=Math.round(Math.max(0,Math.min(2000,ms)));
+  }
+};
+
+// 시뮬레이터 조작 연결
+$('btnSim').onclick=()=>SIM.toggle();
+$('simRoll').oninput =e=>$('simRollV').textContent=e.target.value+'°';
+$('simPitch').oninput=e=>$('simPitchV').textContent=e.target.value+'°';
+$('simPower').oninput=e=>$('simPowerV').textContent=e.target.value+'mg';
+
+// 홈런더비: 게임 화면을 탭하면 스윙
+document.querySelector('#v_hr .gstage').addEventListener('pointerdown',()=>{
+  if(SIM.on&&HR.active) SIM.swing();
+});
+// 점프: 버튼을 누른 시간만큼 체공
+(function(){
+  const b=$('simJump');
+  const down=()=>{ SIM.jumpDown=performance.now(); b.classList.add('press'); };
+  const up=()=>{
+    if(!SIM.jumpDown)return;
+    const d=performance.now()-SIM.jumpDown; SIM.jumpDown=0;
+    b.classList.remove('press'); SIM.jump(d);
+  };
+  b.addEventListener('pointerdown',e=>{e.preventDefault();down();});
+  b.addEventListener('pointerup',up);
+  b.addEventListener('pointerleave',up);
+  b.addEventListener('pointercancel',up);
+})();
 
 // ─────────── Wake Lock ───────────
 async function acquireWake(){ try{S.wakeLock=await navigator.wakeLock?.request('screen');}catch(e){} }
