@@ -802,12 +802,13 @@ const HR={
   cur:null,releaseWeb:0,arriveDev:0,judged:false,raf:0,
   hitAt:0,hitAng:0,hitDist:0,hitTag:'',hitCls:'',windAt:0,
   plots:[],              // 이번 경기의 모든 타구 (탑뷰 누적)
+  curPlot:null,          // 이번 투구의 타구 (헛스윙이면 null)
   TOTAL_PITCH:10,
 
   async start(){
     if(!S.connected)return;
     SFX.init();
-    this.pitchNo=0;this.total=0;this.homers=0;this.hits=0;this.best=0;this.log=[];this.plots=[];
+    this.pitchNo=0;this.total=0;this.homers=0;this.hits=0;this.best=0;this.log=[];this.plots=[];this.curPlot=null;
     this.renderLog();this.render();
     this.active=true;
     await send('E,fast,1'); await sleep(70);
@@ -895,7 +896,12 @@ const HR={
 
     this.phase='hit'; this.hitAt=performance.now();
     this.hitAng=angDeg; this.hitDist=dist; this.hitTag=tag; this.hitCls=cls;
-    if(tag!=='헛스윙') this.plots.push({ang:angDeg,dist,tag,cls,no:this.pitchNo});
+    if(tag==='헛스윙'){
+      this.curPlot=null;                       // 날아가는 공 없음
+    }else{
+      this.curPlot={ang:angDeg,dist,tag,cls,no:this.pitchNo};
+      this.plots.push(this.curPlot);
+    }
 
     this.log.unshift({no:this.pitchNo,pitch:this.cur.name,speed:kmh(this.cur.travel),
       tag,cls,dist,field,diff:Math.round(diff),peak:Math.round(peak)});
@@ -949,8 +955,8 @@ const HR={
       const PY=H*0.93;              // 홈플레이트
       ctx.clearRect(0,0,W,H);
 
-      // 임팩트 이후에는 탑뷰로 즉시 전환
-      if(this.phase==='hit'||this.phase==='result'){
+      // 공을 맞혔을 때만 탑뷰로 즉시 전환 (헛스윙은 타석 시점 유지)
+      if((this.phase==='hit'||this.phase==='result')&&this.hitTag!=='헛스윙'){
         this.drawTop(ctx,W,H);
         this.raf=requestAnimationFrame(draw);
         return;
@@ -1110,15 +1116,14 @@ const HR={
 
     // ── 이전 타구 누적 ──
     for(const p of this.plots){
-      if(p===this.plots[this.plots.length-1]) continue;   // 현재 타구는 뒤에서 따로
+      if(p===this.curPlot) continue;                      // 현재 타구는 뒤에서 따로
       this.drawShot(ctx,P,p,1,0.30);
     }
     // ── 현재 타구 (감속하며 날아감) ──
-    const cur=this.plots[this.plots.length-1];
-    if(cur){
+    if(this.curPlot){
       const t=Math.min(1,el/1400);
       const ease=1-Math.pow(1-t,2.2);                     // 공기저항으로 감속
-      this.drawShot(ctx,P,cur,ease,1);
+      this.drawShot(ctx,P,this.curPlot,ease,1);
     }
 
     // ── 임팩트 순간 플래시 (즉시 컷 전환) ──
