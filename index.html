@@ -636,6 +636,17 @@ async function send(l){
 
 const fwMode=m=>m==='P'?'E':m;          // 웹앱 P(포토) → 펌웨어 E(엣지)
 
+/* 가속도 채널 그룹 — 웹앱 채널명과 펌웨어 명령어가 다름에 주의
+   (웹앱 accx/accy/accz ↔ 펌웨어 ax/ay/az)
+   그래프에 무엇을 그리든, 하나라도 쓰면 펌웨어에는 합+3축을 전부 켠다.
+   → 모션 뷰와 이후 분석에서 모든 성분을 항상 쓸 수 있다 */
+const ACC_GROUP=['acc','accx','accy','accz'];
+async function syncAccChannels(){
+  const on=ACC_GROUP.some(c=>S.fixed[c])?1:0;
+  await send(`E,acc,${on}`);  await sleep(40);
+  await send(`E,axyz,${on}`); await sleep(40);
+}
+
 /* 타이머 리셋 — 기기가 OK,Z로 응답할 때까지(최대 600ms) 이미 전송 중이던
    구식 시각의 데이터 행을 버린다. 리셋 직전 데이터가 남는 문제 방지 */
 async function sendReset(){
@@ -646,8 +657,10 @@ async function sendReset(){
 async function pushAll(){
   for(let i=0;i<4;i++){ await send(`M,${i+1},${fwMode(S.pins[i].mode)}`); await sleep(55); }
   for(const [c,on] of Object.entries(S.fixed)){
-    if(c==='alt')continue; await send(`E,${c},${on?1:0}`); await sleep(55);
+    if(c==='alt'||ACC_GROUP.indexOf(c)>=0)continue;
+    await send(`E,${c},${on?1:0}`); await sleep(55);
   }
+  await syncAccChannels();
   await send(`R,${S.rateMs}`);
 }
 
@@ -1716,7 +1729,10 @@ document.querySelectorAll('[data-ch]').forEach(el=>{
       }
     }
     if(c==='lgt')$('lgtWarn').style.display=el.checked?'block':'none';
-    if(S.connected&&c!=='alt')send(`E,${c},${el.checked?1:0}`);
+    if(S.connected&&c!=='alt'){
+      if(ACC_GROUP.indexOf(c)>=0) syncAccChannels();
+      else send(`E,${c},${el.checked?1:0}`);
+    }
     channelsChanged();
   });
 });
@@ -1847,9 +1863,9 @@ const MOTION={
           S.fixed[c]=true;
           const el=document.querySelector(`[data-ch="${c}"]`);
           if(el)el.checked=true;
-          if(S.connected)send(`E,${c},1`);
         }
       });
+      if(S.connected)syncAccChannels();
       channelsChanged();
       this.loop();
     }else cancelAnimationFrame(this.raf);
@@ -1964,8 +1980,8 @@ $('btnAxyz').onclick=()=>{
   ['accx','accy','accz'].forEach(c=>{
     S.fixed[c]=anyOff;
     const el=document.querySelector(`[data-ch="${c}"]`); if(el)el.checked=anyOff;
-    if(S.connected)send(`E,${c},${anyOff?1:0}`);
   });
+  if(S.connected)syncAccChannels();
   $('btnAxyz').textContent=anyOff?'3축 한번에 끄기':'3축 한번에 켜기';
   channelsChanged();
 };
@@ -2024,6 +2040,9 @@ const SIM={
       const k=p[1], v=p[2]==='1'?1:0;
       if(k==='fast') this.fast=!!v;
       else if(k==='axyz'){ this.ch.accx=this.ch.accy=this.ch.accz=v; }
+      else if(k==='ax') this.ch.accx=v;
+      else if(k==='ay') this.ch.accy=v;
+      else if(k==='az') this.ch.accz=v;
       else if(k in this.ch) this.ch[k]=v;
     }
     else if(c==='R'){ const r=parseInt(p[1]); if(!isNaN(r)){ this.rate=Math.max(100,r); this.restart(); } }
