@@ -542,7 +542,9 @@ async function connect(){
     dev.addEventListener('gattserverdisconnected',onDisc);
     const svc=await (await dev.gatt.connect()).getPrimaryService(SVC);
     for(const c of await svc.getCharacteristics()){
-      if(c.properties.notify) S.nc=c;
+      // MakeCode 버전에 따라 수신 특성이 notify 대신 indicate로 잡히기도 한다.
+      // startNotifications()는 둘 다 처리하므로 양쪽 모두 허용한다.
+      if(c.properties.notify||c.properties.indicate) S.nc=c;
       if(c.properties.write||c.properties.writeWithoutResponse) S.wc=c;
     }
     if(!S.nc||!S.wc) throw new Error('UART 특성을 찾지 못했습니다');
