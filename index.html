@@ -210,7 +210,7 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
     <span id="recBadge" class="recbadge">대기</span>
     <button id="btnConn" class="primary">BLE 연결</button>
     <button id="btnSerial">USB 연결</button>
-    <button id="btnIdent" disabled>♪</button>
+    <button id="btnIdent" disabled title="기기 식별 멜로디 — 연결된 마이크로비트에서 소리가 납니다">♪</button>
     <button id="btnSim">시뮬레이터</button>
     <input id="teamName" type="text" placeholder="조 이름" style="width:104px">
     <div class="spacer"></div>
@@ -454,6 +454,7 @@ const S={
   gMode:'time',xCh:'p1',yCh:'p2',trend:'none',analyze:false,aPts:[],
   wakeLock:null,clockOffset:0,   // 기기시각 = 웹시각 + clockOffset
   gate:{last:{},vlog:[]},        // last[pin]={us,ms} 광문 최근 이벤트, vlog=속력 기록
+  dropStale:false,               // Z(리셋) 직후, 전송 중이던 구식 행을 버리는 중
   flow:{},                       // 핀별 연속 차단 경고 상태
   pingSent:0,pingCb:null,
 };
@@ -632,6 +633,14 @@ async function send(l){
 }
 
 const fwMode=m=>m==='P'?'E':m;          // 웹앱 P(포토) → 펌웨어 E(엣지)
+
+/* 타이머 리셋 — 기기가 OK,Z로 응답할 때까지(최대 600ms) 이미 전송 중이던
+   구식 시각의 데이터 행을 버린다. 리셋 직전 데이터가 남는 문제 방지 */
+async function sendReset(){
+  S.dropStale=true;
+  await send('Z');
+  setTimeout(()=>{S.dropStale=false;},600);   // 응답 유실 대비 자동 해제
+}
 async function pushAll(){
   for(let i=0;i<4;i++){ await send(`M,${i+1},${fwMode(S.pins[i].mode)}`); await sleep(55); }
   for(const [c,on] of Object.entries(S.fixed)){
@@ -681,7 +690,8 @@ function parseLine(line){
   const f=line.split(',');
   if(f[0]==='PONG'){ const t=parseFloat(f[1]); if(S.pingCb&&!isNaN(t)){const cb=S.pingCb;S.pingCb=null;cb(t);} return; }
   if(f[0]==='I'){ if(f[3]) $('devName').textContent=f[3]; return; }
-  if(f[0]==='G'){ onGateEvent(parseInt(f[1]),parseInt(f[2]),parseFloat(f[3]),parseInt(f[4])); return; }
+  if(f[0]==='OK'){ if(f[1]==='Z') S.dropStale=false; return; }
+  if(f[0]==='G'){ if(S.dropStale)return; onGateEvent(parseInt(f[1]),parseInt(f[2]),parseFloat(f[3]),parseInt(f[4])); return; }
   if(f[0]==='W'){ onFlowWarn(parseInt(f[1]),f[2]); return; }
   if(f[0]!=='D') return;
 
@@ -690,6 +700,7 @@ function parseLine(line){
   // 게임 모드 처리
   if(HR.active){ HR.feed(f,ms); return; }
   if(JP.active){ JP.feed(f,ms); return; }
+  if(S.dropStale) return;          // 리셋 반영 전의 구식 행은 버린다
 
   const row={t:ms/1000,marker:''};
   for(const ch of CH){
@@ -1730,7 +1741,20 @@ $('btnSerial').onclick=()=>{
   if(S.connected){ disconnect(); return; }
   connectSerial();
 };
-$('btnIdent').onclick=()=>send('ID');
+$('btnIdent').onclick=()=>{
+  // 시각 피드백: 잠깐 강조되어 눌렸음을 보여준다
+  const b=$('btnIdent');
+  b.classList.add('primary');
+  setTimeout(()=>b.classList.remove('primary'),700);
+  if(SIM.on){
+    // 시뮬레이터에는 기기가 없으므로 같은 멜로디를 태블릿에서 재생
+    SFX.init();
+    [[523,0],[659,140],[784,280],[1047,420]].forEach(([fr,d])=>
+      setTimeout(()=>SFX.beep(fr,0.16,0.15),d));
+    return;
+  }
+  send('ID');
+};
 $('rate').oninput=e=>{S.rateMs=parseInt(e.target.value);$('rateVal').textContent=S.rateMs+'ms';};
 $('rate').onchange=()=>{if(S.connected)send(`R,${S.rateMs}`);};
 $('gMode').onchange=e=>{
@@ -1752,7 +1776,7 @@ $('btnStart').onclick=async()=>{
     S.data=[];S.markers=[];S.aPts=[];$('analyzeOut').style.display='none';
     S.frozen=false;S.gate.last={};S.gate.vlog=[];$('gatePanel').style.display='none';
     rebuildChart();rebuildTable();
-    S.running=true;await send('Z');await sleep(80);await send('G,1');
+    S.running=true;await sendReset();await sleep(80);await send('G,1');
     setRunUI(true);await acquireWake();
   }else{
     S.running=false;S.frozen=true;          // 기록분 보존
@@ -1768,7 +1792,7 @@ $('btnReset').onclick=async()=>{
   if(S.data.length&&!confirm('측정 데이터를 모두 지울까요?'))return;
   S.data=[];S.markers=[];S.aPts=[];S.frozen=false;$('analyzeOut').style.display='none';
   S.gate.last={};S.gate.vlog=[];$('gatePanel').style.display='none';
-  await send('Z');rebuildChart();rebuildTable();rebuildVals();
+  await sendReset();rebuildChart();rebuildTable();rebuildVals();
 };
 $('btnCsv').onclick=saveCsv;
 $('hrStart').onclick=()=>{ if(HR.active){HR.stop();HR.csv();} else {HR.start();setHRUI(true);} };
@@ -2003,7 +2027,7 @@ const SIM={
     else if(c==='R'){ const r=parseInt(p[1]); if(!isNaN(r)){ this.rate=Math.max(100,r); this.restart(); } }
     else if(c==='F'){ const t=parseInt(p[1]); if(!isNaN(t)) this.swingTh=t; }
     else if(c==='G'){ if(p[1]==='1') this.t0=this.now(); }   // 전송은 항상 계속
-    else if(c==='Z'){ this.t0=this.now(); this.edgeCount=[0,0,0,0]; }
+    else if(c==='Z'){ this.t0=this.now(); this.edgeCount=[0,0,0,0]; this.emit('OK,Z'); }
     // B / V / T / ID 는 소리 명령이므로 무시
   },
 
