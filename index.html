@@ -208,7 +208,8 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
     <div id="dot"></div>
     <span id="devName">미연결</span>
     <span id="recBadge" class="recbadge">대기</span>
-    <button id="btnConn" class="primary">연결</button>
+    <button id="btnConn" class="primary">BLE 연결</button>
+    <button id="btnSerial">USB 연결</button>
     <button id="btnIdent" disabled>♪</button>
     <button id="btnSim">시뮬레이터</button>
     <input id="teamName" type="text" placeholder="조 이름" style="width:104px">
@@ -235,8 +236,10 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
 
   <div id="noBle">
     <h2>이 브라우저에서는 사용할 수 없습니다</h2>
-    <p>안드로이드 태블릿의 <b>Chrome</b> 브라우저로 접속해 주세요.<br>
-       iPad(Safari)·Firefox는 Web Bluetooth를 지원하지 않습니다.</p>
+    <p><b>Chrome</b> 또는 <b>Edge</b>로 접속해 주세요.<br>
+       · 안드로이드 태블릿 → BLE 무선 연결<br>
+       · Windows·Mac·크롬북 → USB 유선 연결(Web Serial) 또는 BLE<br>
+       iPad(Safari)·Firefox는 두 방식 모두 지원하지 않습니다.</p>
   </div>
 
   <div id="main">
@@ -286,6 +289,12 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
         <div id="xyRow" style="display:none">
           <div class="rowline"><label style="width:34px">X축</label><select id="xCh" style="flex:1"></select></div>
           <div class="rowline"><label style="width:34px">Y축</label><select id="yCh" style="flex:1"></select></div>
+          <div class="rowline"><label style="width:34px">경향</label>
+            <select id="trend" style="flex:1">
+              <option value="none">없음 (개별 점만)</option>
+              <option value="mean">그룹 평균 ± 편차</option>
+              <option value="linreg">선형 회귀</option>
+            </select></div>
         </div>
         <label class="chk"><input type="checkbox" id="chkAnalyze">구간 분석 (그래프를 두 번 탭)</label>
       </div>
@@ -424,6 +433,8 @@ const wrapUs=d=>d<0?d+4294967296:d;      // 32비트 µs 되돌림 보정
 // ─────────── 상태 ───────────
 const S={
   dev:null,wc:null,nc:null,connected:false,devName:'',
+  transport:null,            // 'ble' | 'serial' | 'sim'
+  port:null,reader:null,writer:null,keepReading:false,
   running:false,          // = 기록(recording) 중 여부
   buf:'',view:'measure',
   PREVIEW_MAX:300,        // 기록 전 미리보기 유지 행 수
@@ -434,7 +445,7 @@ const S={
          accx:false,accy:false,accz:false},
   motion:false,last:null,motionRaf:0,
   rateMs:500,data:[],markers:[],maxRows:20000,
-  gMode:'time',xCh:'p1',yCh:'p2',analyze:false,aPts:[],
+  gMode:'time',xCh:'p1',yCh:'p2',trend:'none',analyze:false,aPts:[],
   wakeLock:null,clockOffset:0,   // 기기시각 = 웹시각 + clockOffset
   gate:{last:{},vlog:[]},        // last[pin]={us,ms} 광문 최근 이벤트, vlog=속력 기록
   flow:{},                       // 핀별 연속 차단 경고 상태
@@ -467,7 +478,12 @@ function onGateEvent(pin,ms,us,count){
   const v=round4(distM/(dtUs/1e6));                   // m/s
   const row={t:ms/1000,marker:''};
   row['gv'+idx]=v;
-  row.gx=g[idx].pos;
+  row.gv=v;                 // 통합 채널: 어느 구간이든 같은 채널에 기록
+  row.gv2=round4(v*v);      // 속력² — v²-x 직선화용 (기울기=2g)
+  row.gseg=idx;             // 구간 번호 (X-Y 색 구분용)
+  // 구간 평균 속력은 구간 중간 지점의 순간 속력에 해당하므로
+  // 통과 위치는 구간의 중간(거리 기준)으로 기록한다
+  row.gx=round4((g[idx-1].pos+g[idx].pos)/2);
   // 가속도: 직전 구간 속력이 있으면 (v2-v1)/Δt (Δt = 두 구간 중간시각 차 ≈ (t1+t2)/2)
   const vl=S.gate.vlog;
   vl.push({seg:idx,v,us,dtUs});
@@ -525,23 +541,87 @@ async function connect(){
     if(!S.nc||!S.wc) throw new Error('UART 특성을 찾지 못했습니다');
     await S.nc.startNotifications();
     S.nc.addEventListener('characteristicvaluechanged',onData);
-    S.dev=dev; S.connected=true;
+    S.dev=dev; S.connected=true; S.transport='ble';
     S.devName=(dev.name||'').replace('BBC micro:bit','').trim()||'연결됨';
     setConnUI(true);
     await sleep(300); await pushAll(); send('?');
   }catch(e){ if(e.name!=='NotFoundError') alert('연결 실패: '+e.message); }
 }
 function onDisc(){
-  S.connected=false;S.running=false;S.wc=null;S.nc=null;
+  S.connected=false;S.running=false;S.wc=null;S.nc=null;S.transport=null;
   setConnUI(false);setRunUI(false);
   HR.stop(); JP.stop();
 }
 const disconnect=()=>{
   if(SIM.on){ SIM.off(); return; }
+  if(S.transport==='serial'){ disconnectSerial(); return; }
   if(S.dev?.gatt.connected) S.dev.gatt.disconnect();
 };
+
+/* ── USB 시리얼 (Web Serial) ── */
+async function connectSerial(){
+  if(!navigator.serial){ alert('이 브라우저는 USB 연결(Web Serial)을 지원하지 않습니다.\nChrome 또는 Edge 데스크톱 버전을 사용하세요.'); return; }
+  try{
+    const port=await navigator.serial.requestPort();
+    await port.open({baudRate:115200});
+    S.port=port; S.connected=true; S.transport='serial';
+    S.devName='USB'; S.keepReading=true;
+    const info=port.getInfo?.();
+    if(info?.usbProductId) S.devName='USB '+info.usbProductId.toString(16);
+    S.writer=port.writable.getWriter();
+    setConnUI(true);
+    readSerialLoop();
+    await sleep(200); await pushAll(); send('?');
+  }catch(e){
+    if(e.name!=='NotFoundError') alert('USB 연결 실패: '+e.message);
+    S.connected=false;S.transport=null;setConnUI(false);
+  }
+}
+async function readSerialLoop(){
+  try{
+    while(S.keepReading&&S.port?.readable){
+      S.reader=S.port.readable.getReader();
+      try{
+        while(true){
+          const {value,done}=await S.reader.read();
+          if(done) break;
+          if(value){
+            S.buf+=dec.decode(value,{stream:true});
+            let i;
+            while((i=S.buf.indexOf('\n'))>=0){
+              const l=S.buf.slice(0,i).trim(); S.buf=S.buf.slice(i+1);
+              if(l) parseLine(l);
+            }
+            if(S.buf.length>2000) S.buf='';
+          }
+        }
+      }catch(e){ /* 케이블 분리 등 */ }
+      finally{ try{S.reader.releaseLock();}catch(e){} S.reader=null; }
+    }
+  }finally{ if(S.keepReading) onSerialLost(); }
+}
+function onSerialLost(){
+  S.keepReading=false;S.connected=false;S.running=false;S.transport=null;
+  try{S.writer?.releaseLock();}catch(e){}
+  S.writer=null;S.port=null;
+  setConnUI(false);setRunUI(false);HR.stop();JP.stop();
+}
+async function disconnectSerial(){
+  S.keepReading=false;
+  try{await S.reader?.cancel();}catch(e){}
+  try{S.writer?.releaseLock();}catch(e){}
+  try{await S.port?.close();}catch(e){}
+  S.reader=null;S.writer=null;S.port=null;
+  S.connected=false;S.transport=null;
+  setConnUI(false);setRunUI(false);
+}
 async function send(l){
   if(SIM.on){ SIM.cmd(l); return; }
+  if(S.transport==='serial'){
+    if(!S.writer)return;
+    try{ await S.writer.write(enc.encode(l+'\n')); }catch(e){}
+    return;
+  }
   if(!S.wc)return; try{await S.wc.writeValue(enc.encode(l+'\n'));}catch(e){}
 }
 
@@ -612,9 +692,11 @@ function parseLine(line){
       const pr=PROFILES.A.find(x=>x.id===p.profile)||PROFILES.A[0];
       row[id]=round4(pr.conv(row[id],p.opts));
     } else if(p.mode==='T') row[id]=round4(row[id]+(p.opts.off||0));
-    else if(p.mode==='P'&&p.profile==='drop'){
-      const per=(p.opts.ml&&p.opts.drops)?p.opts.ml/p.opts.drops:0;
-      row[id+'v']=per?round4(row[id]*per):null;
+    else if(p.mode==='P'){
+      if(p.profile==='drop'){
+        const per=(p.opts.ml&&p.opts.drops)?p.opts.ml/p.opts.drops:0;
+        row[id+'v']=per?round4(row[id]*per):null;
+      } else row[id]=null;      // 광문: 폴링 값 무시
     }
   }
   if(S.running&&S.data.length>=S.maxRows){
@@ -623,7 +705,10 @@ function parseLine(line){
   }
   S.last=row;
   updateVals(row);
-  addRow(row);
+  // 활성 채널 값이 하나도 없는 행(광문만 켜진 경우 등)은 기록하지 않는다
+  // — 광문 데이터는 통과 이벤트(onGateEvent)에서만 행이 생긴다
+  const hasVal=activeChannels().some(ch=>row[ch.id]!=null);
+  if(hasVal) addRow(row);
 }
 
 // ─────────── 채널 목록 ───────────
@@ -641,7 +726,8 @@ function activeChannels(){
       if(p.profile==='drop'){
         out.push({id:'p'+(i+1),name:`P${i+1} 방울수`,unit:'개'});
         out.push({id:'p'+(i+1)+'v',name:`P${i+1} 부피`,unit:'mL'});
-      }else out.push({id:'p'+(i+1),name:`P${i+1} 통과`,unit:'회'});
+      }
+      // 광문 모드: 누적 횟수는 채널로 노출하지 않음 (구간 속력 채널이 대신함)
       continue;
     }
     let unit='°C';
@@ -649,10 +735,12 @@ function activeChannels(){
     out.push({id:'p'+(i+1),name:pinLabel(i),unit});
   }
   const g=gatePins();
+  if(g.length>=2) out.push({id:'gv',name:'구간 속력 (전체)',unit:'m/s'});
+  if(g.length>=2) out.push({id:'gv2',name:'구간 속력² (전체)',unit:'m²/s²'});
   for(let k=1;k<g.length;k++)
     out.push({id:'gv'+k,name:`구간${k} 속력 (P${g[k-1].i+1}→P${g[k].i+1})`,unit:'m/s'});
   if(g.length>=3) out.push({id:'ga',name:'가속도',unit:'m/s²'});
-  if(g.length>=2) out.push({id:'gx',name:'통과 위치',unit:'cm'});
+  if(g.length>=2) out.push({id:'gx',name:'구간 중간 위치',unit:'cm'});
   for(const ch of CH){ if(!ch.pin&&S.fixed[ch.id]) out.push({id:ch.id,name:ch.name,unit:ch.unit||''}); }
   return out;
 }
@@ -729,9 +817,7 @@ function rebuildChart(){
   }else{
     const xc=chs.find(c=>c.id===S.xCh),yc=chs.find(c=>c.id===S.yCh);
     chart=new Chart(ctx,{type:'scatter',
-      data:{datasets:[{label:`${yc?.name||''} — ${xc?.name||''}`,
-        data:S.data.filter(r=>ok(r[S.xCh])&&ok(r[S.yCh])).map(r=>({x:r[S.xCh],y:r[S.yCh]})),
-        borderColor:COLORS[0],backgroundColor:COLORS[0],pointRadius:3.5,showLine:false,parsing:false}]},
+      data:{datasets:xyDatasets(chs)},
       options:{animation:false,responsive:true,maintainAspectRatio:false,
         scales:{x:{type:'linear',title:{display:true,text:(xc?.name||'')+(xc?.unit?` (${xc.unit})`:'')}},
                 y:{type:'linear',title:{display:true,text:(yc?.name||'')+(yc?.unit?` (${yc.unit})`:'')}}},
@@ -739,10 +825,103 @@ function rebuildChart(){
   }
 }
 const ok=v=>v!=null&&!isNaN(v);
+/* X-Y 데이터셋 구성 — 통합 속력(gv)은 시간순으로 선을 잇고 점 색만 구간별 */
+const SEG_GAP_S=5;             // 이벤트 간격이 이보다 크면 별개 낙하로 보고 선을 끊는다
+function xyDatasets(chs){
+  const rows=S.data.filter(r=>ok(r[S.xCh])&&ok(r[S.yCh]));
+  const trendOn=S.trend!=='none';
+  const base=[];
+
+  const isGV=id=>id==='gv'||id==='gv2';
+  if(!isGV(S.yCh)&&!isGV(S.xCh)){
+    base.push({label:`${chs.find(c=>c.id===S.yCh)?.name||''} — ${chs.find(c=>c.id===S.xCh)?.name||''}`,
+      data:rows.map(r=>({x:r[S.xCh],y:r[S.yCh]})),
+      borderColor:COLORS[0],backgroundColor:trendOn?'rgba(14,124,107,.28)':COLORS[0],
+      pointRadius:3.5,showLine:false,parsing:false});
+  }else{
+    const data=[],ptCol=[];
+    let prevT=null,lastT=null;
+    for(const r of rows){
+      if(prevT!=null&&r.t-prevT>SEG_GAP_S){ data.push({x:NaN,y:NaN}); ptCol.push('rgba(0,0,0,0)'); }
+      data.push({x:r[S.xCh],y:r[S.yCh]});
+      const c=COLORS[((r.gseg||1)-1)%COLORS.length];
+      ptCol.push(trendOn?c+'55':c);
+      prevT=r.t; lastT=r.t;
+    }
+    base.push({_gv:true,_lastT:lastT,
+      label:trendOn?'개별 측정':'구간 속력 — 점 색은 구간, 선은 낙하 1회',data,
+      borderColor:'#8CA0BC',borderWidth:2,tension:0.15,
+      pointBackgroundColor:ptCol,pointBorderColor:ptCol,pointRadius:trendOn?3.5:4.5,
+      showLine:!trendOn,spanGaps:false,parsing:false});
+  }
+
+  if(trendOn&&rows.length>=2) base.push(...trendDatasets(rows));
+  return base;
+}
+
+/* 경향선 데이터셋 생성 */
+function trendDatasets(rows){
+  const pts=rows.map(r=>({x:r[S.xCh],y:r[S.yCh]})).filter(p=>ok(p.x)&&ok(p.y));
+  if(S.trend==='mean'){
+    // 같은 X끼리 그룹화 (부동소수 대비 1e-6 반올림)
+    const grp={};
+    for(const p of pts){
+      const k=Math.round(p.x*1e6)/1e6;
+      (grp[k]=grp[k]||[]).push(p.y);
+    }
+    const xs=Object.keys(grp).map(Number).sort((a,b)=>a-b);
+    const mean=[],lo=[],hi=[];
+    for(const x of xs){
+      const ys=grp[x],n=ys.length;
+      const m=ys.reduce((s,v)=>s+v,0)/n;
+      const sd=n>1?Math.sqrt(ys.reduce((s,v)=>s+(v-m)*(v-m),0)/(n-1)):0;
+      mean.push({x,y:m}); lo.push({x,y:m-sd}); hi.push({x,y:m+sd});
+    }
+    return [
+      {label:'±1 표준편차',data:hi.concat([...lo].reverse()),
+       borderColor:'rgba(0,0,0,0)',backgroundColor:'rgba(14,124,107,.14)',
+       pointRadius:0,showLine:true,fill:true,tension:0.2,parsing:false},
+      {label:'평균',data:mean,borderColor:'#0E7C6B',backgroundColor:'#0E7C6B',
+       borderWidth:3,pointRadius:5,pointStyle:'rectRot',showLine:true,tension:0.2,parsing:false},
+    ];
+  }
+  if(S.trend==='linreg'){
+    const n=pts.length;
+    const sx=pts.reduce((s,p)=>s+p.x,0),sy=pts.reduce((s,p)=>s+p.y,0);
+    const sxx=pts.reduce((s,p)=>s+p.x*p.x,0),sxy=pts.reduce((s,p)=>s+p.x*p.y,0);
+    const denom=n*sxx-sx*sx;
+    if(Math.abs(denom)<1e-12) return [];
+    const a=(n*sxy-sx*sy)/denom, b=(sy-a*sx)/n;
+    const my=sy/n;
+    const ssTot=pts.reduce((s,p)=>s+(p.y-my)*(p.y-my),0);
+    const ssRes=pts.reduce((s,p)=>{const e=p.y-(a*p.x+b);return s+e*e;},0);
+    const r2=ssTot>0?1-ssRes/ssTot:1;
+    const x1=Math.min(...pts.map(p=>p.x)),x2=Math.max(...pts.map(p=>p.x));
+    return [{label:`회귀: y=${a.toFixed(4)}x${b>=0?'+':''}${b.toFixed(3)}  (R²=${r2.toFixed(3)})`,
+      data:[{x:x1,y:a*x1+b},{x:x2,y:a*x2+b}],
+      borderColor:'#C4306B',borderWidth:2.5,borderDash:[8,5],
+      pointRadius:0,showLine:true,parsing:false}];
+  }
+  return [];
+}
 function pushChart(row){
   if(!chart)return;
   if(S.gMode==='time') activeChannels().forEach((ch,i)=>chart.data.datasets[i]?.data.push({x:row.t,y:row[ch.id]}));
-  else if(ok(row[S.xCh])&&ok(row[S.yCh])) chart.data.datasets[0].data.push({x:row[S.xCh],y:row[S.yCh]});
+  else if(ok(row[S.xCh])&&ok(row[S.yCh])){
+    if(S.trend!=='none'){ rebuildChart(); return; }   // 경향선은 전체 재계산
+    const ds=chart.data.datasets[0];
+    if((S.yCh==='gv'||S.yCh==='gv2'||S.xCh==='gv'||S.xCh==='gv2')&&ds?._gv){
+      if(ds._lastT!=null&&row.t-ds._lastT>SEG_GAP_S){
+        ds.data.push({x:NaN,y:NaN});
+        ds.pointBackgroundColor.push('rgba(0,0,0,0)');
+        ds.pointBorderColor.push('rgba(0,0,0,0)');
+      }
+      ds.data.push({x:row[S.xCh],y:row[S.yCh]});
+      const c=COLORS[((row.gseg||1)-1)%COLORS.length];
+      ds.pointBackgroundColor.push(c); ds.pointBorderColor.push(c);
+      ds._lastT=row.t;
+    } else chart.data.datasets[0].data.push({x:row[S.xCh],y:row[S.yCh]});
+  }
   if(!S.running) chart.data.datasets.forEach(d=>{ while(d.data.length>S.PREVIEW_MAX) d.data.shift(); });
   chart.update('none');
 }
@@ -1523,7 +1702,14 @@ document.querySelectorAll('#tabs button').forEach(b=>{
   };
 });
 $('btnMenu').onclick=()=>$('side').classList.toggle('hidden');
-$('btnConn').onclick=()=>S.connected?disconnect():connect();
+$('btnConn').onclick=()=>{
+  if(S.connected){ disconnect(); return; }
+  connect();
+};
+$('btnSerial').onclick=()=>{
+  if(S.connected){ disconnect(); return; }
+  connectSerial();
+};
 $('btnIdent').onclick=()=>send('ID');
 $('rate').oninput=e=>{S.rateMs=parseInt(e.target.value);$('rateVal').textContent=S.rateMs+'ms';};
 $('rate').onchange=()=>{if(S.connected)send(`R,${S.rateMs}`);};
@@ -1532,7 +1718,12 @@ $('gMode').onchange=e=>{
   S.aPts=[];$('analyzeOut').style.display='none';rebuildChart();
 };
 $('xCh').onchange=e=>{S.xCh=e.target.value;rebuildChart();};
-$('yCh').onchange=e=>{S.yCh=e.target.value;rebuildChart();};
+$('yCh').onchange=e=>{S.yCh=e.target.value;autoTrend();rebuildChart();};
+$('trend').onchange=e=>{S.trend=e.target.value;rebuildChart();};
+// 통합 속력을 고르면 그룹 평균을 기본값으로
+function autoTrend(){
+  if((S.yCh==='gv'||S.yCh==='gv2')&&S.trend==='none'){S.trend='mean';$('trend').value='mean';}
+}
 $('chkAnalyze').onchange=e=>{S.analyze=e.target.checked;S.aPts=[];$('analyzeOut').style.display='none';chart?.update('none');};
 
 $('btnStart').onclick=async()=>{
@@ -1570,9 +1761,16 @@ $('jpStart').onclick=()=>{ if(JP.active){JP.stop();JP.csv();} else {JP.start();s
 
 function setConnUI(on){
   $('dot').classList.toggle('on',on);
-  $('devName').textContent=on?S.devName:'미연결';
-  $('btnConn').textContent=on?'해제':'연결';
-  $('btnConn').classList.toggle('primary',!on);
+  const tag=S.transport==='serial'?'USB':S.transport==='sim'?'SIM':'BLE';
+  $('devName').textContent=on?`${tag} · ${S.devName}`:'미연결';
+  // 연결된 방식의 버튼만 '해제'로 바뀌고, 다른 방식은 잠근다
+  const isSer=S.transport==='serial';
+  $('btnConn').textContent=on&&!isSer?'해제':'BLE 연결';
+  $('btnSerial').textContent=on&&isSer?'해제':'USB 연결';
+  $('btnConn').classList.toggle('primary',!on||!isSer);
+  $('btnSerial').classList.toggle('primary',on&&isSer);
+  $('btnConn').disabled=on&&isSer;
+  $('btnSerial').disabled=on&&!isSer;
   ['btnIdent','btnStart','btnMark','btnReset','hrStart','jpStart'].forEach(i=>$(i).disabled=!on);
   if(!on){ $('recBadge').className='recbadge'; $('recBadge').textContent='대기'; }
   else if(!S.running){ $('recBadge').textContent='실시간'; }
@@ -1748,13 +1946,13 @@ const SIM={
     if(this.on){ this.off(); return; }
     if(S.connected){ alert('실제 기기 연결을 먼저 해제하세요.'); return; }
     this.on=true; this.boot=performance.now(); this.t0=0;
-    S.connected=true; S.devName='시뮬레이터';
+    S.connected=true; S.devName='시뮬레이터'; S.transport='sim';
     document.body.classList.add('simmode');
     $('simBar').classList.add('on');
     $('btnSim').classList.add('primary');
-    $('btnConn').disabled=true;
     setConnUI(true);
-    $('devName').textContent='시뮬레이터';
+    $('btnConn').disabled=true; $('btnSerial').disabled=true;
+    $('devName').textContent='SIM · 시뮬레이터';
     this.restart();
   },
   off(){
@@ -1764,8 +1962,8 @@ const SIM={
     document.body.classList.remove('simmode');
     $('simBar').classList.remove('on');
     $('btnSim').classList.remove('primary');
-    $('btnConn').disabled=false;
     setConnUI(false); setRunUI(false);
+    $('btnConn').disabled=false; $('btnSerial').disabled=false;
     HR.stop(); JP.stop(); S.running=false;
   },
 
@@ -1920,6 +2118,11 @@ document.querySelector('#v_hr .gstage').addEventListener('pointerdown',()=>{
   b.addEventListener('pointercancel',up);
 })();
 
+// ─────────── 하트비트 ───────────
+// USB 연결은 기기가 끊김을 알 수 없으므로 주기적으로 신호를 보냅니다.
+// 15초간 아무 명령이 없으면 기기는 대기 표시(···)로 돌아갑니다.
+setInterval(()=>{ if(S.connected&&S.transport==='serial') send('H'); },5000);
+
 // ─────────── Wake Lock ───────────
 async function acquireWake(){ try{S.wakeLock=await navigator.wakeLock?.request('screen');}catch(e){} }
 function releaseWake(){ S.wakeLock?.release();S.wakeLock=null; }
@@ -1929,7 +2132,11 @@ document.addEventListener('visibilitychange',()=>{
 
 // ─────────── 초기화 ───────────
 (function(){
-  if(!navigator.bluetooth){$('noBle').style.display='block';$('main').style.display='none';return;}
+  if(!navigator.bluetooth&&!navigator.serial){
+    $('noBle').style.display='block';$('main').style.display='none';return;
+  }
+  if(!navigator.bluetooth){ $('btnConn').disabled=true; $('btnConn').title='이 브라우저는 Web Bluetooth 미지원'; }
+  if(!navigator.serial){ $('btnSerial').disabled=true; $('btnSerial').title='이 브라우저는 Web Serial 미지원'; }
   buildPinUI();
   for(let i=0;i<4;i++)refreshPin(i);
   channelsChanged();
