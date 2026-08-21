@@ -340,6 +340,12 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
         <div class="gbar">
           <button id="hrStart" class="primary" disabled>경기 시작</button>
           <button id="hrMute" style="min-width:52px;padding:0">🔊</button>
+          <div class="simctl" style="background:var(--card);border:1.5px solid var(--line);
+               border-radius:var(--r);padding:4px 10px">
+            <label>타이밍 보정</label>
+            <input type="range" id="hrCal" min="-200" max="200" step="10" value="0">
+            <span class="num" id="hrCalV">0ms</span>
+          </div>
           <div class="gstat"><div class="n">투구</div><div class="v num"><span id="hrPitch">0</span>/10</div></div>
           <div class="gstat"><div class="n">총 비거리</div><div class="v num"><span id="hrTotal">0</span>m</div></div>
           <div class="gstat"><div class="n">홈런</div><div class="v num" id="hrHomer">0</div></div>
@@ -635,17 +641,29 @@ async function pushAll(){
 }
 
 // 시계 동기화: 핑 왕복의 절반을 보정
-function syncClock(){
+/* 시계 동기화 — 왕복 지연이 가장 짧은 표본을 채택한다.
+   지연이 한쪽으로 치우치면 오프셋이 편향되므로 여러 번 재는 것이 중요하다. */
+function pingOnce(){
   return new Promise(res=>{
-    S.pingSent=performance.now();
+    const sent=performance.now();
     S.pingCb=devT=>{
-      const rtt=performance.now()-S.pingSent;
-      S.clockOffset=devT-(S.pingSent+rtt/2);
-      res();
+      const rtt=performance.now()-sent;
+      res({rtt,offset:devT-(sent+rtt/2)});
     };
     send('P');
-    setTimeout(()=>{ if(S.pingCb){S.pingCb=null;res();} },800);
+    setTimeout(()=>{ if(S.pingCb){S.pingCb=null;res(null);} },700);
   });
+}
+async function syncClock(n){
+  const N=n||5, samples=[];
+  for(let k=0;k<N;k++){
+    const r=await pingOnce();
+    if(r) samples.push(r);
+    await sleep(60);
+  }
+  if(!samples.length) return;
+  samples.sort((a,b)=>a.rtt-b.rtt);
+  S.clockOffset=samples[0].offset;      // 왕복이 가장 짧은 표본이 가장 정확
 }
 const toDev=webT=>webT+S.clockOffset;   // 웹 시각 → 기기 시각
 
@@ -1081,6 +1099,7 @@ const HR={
   phase:'idle',          // idle | wind | fly | hit | result
   cur:null,releaseWeb:0,arriveDev:0,judged:false,raf:0,
   hitAt:0,hitAng:0,hitDist:0,hitTag:'',hitCls:'',windAt:0,
+  calMs:0,               // 타이밍 보정(ms) — 양수면 판정이 '늦음' 쪽으로 이동
   plots:[],              // 이번 경기의 모든 타구 (탑뷰 누적)
   curPlot:null,          // 이번 투구의 타구 (헛스윙이면 null)
   TOTAL_PITCH:10,
@@ -1095,7 +1114,8 @@ const HR={
     await send('R,100');    await sleep(70);
     await send('F,2200');   await sleep(70);
     await send('G,1');      await sleep(120);
-    await syncClock();
+    msg('hrMsg','','시계 맞추는 중…');
+    await syncClock(5);
     await acquireWake();
     this.loop(); this.next();
   },
@@ -1136,7 +1156,7 @@ const HR={
     const swingDev=parseFloat(st),peak=parseFloat(sp)||2200;
     if(isNaN(swingDev))return;
     this.judged=true;
-    this.judge(swingDev-this.arriveDev,peak);
+    this.judge(swingDev-this.arriveDev+this.calMs,peak);
   },
 
   /* diff < 0 : 빠름(당겨치기, 좌측) / diff > 0 : 늦음(밀어치기, 우측) */
@@ -1752,6 +1772,7 @@ $('btnReset').onclick=async()=>{
 };
 $('btnCsv').onclick=saveCsv;
 $('hrStart').onclick=()=>{ if(HR.active){HR.stop();HR.csv();} else {HR.start();setHRUI(true);} };
+$('hrCal').oninput=e=>{ HR.calMs=+e.target.value; $('hrCalV').textContent=HR.calMs+'ms'; };
 $('hrMute').onclick=()=>{
   SFX.init(); SFX.muted=!SFX.muted;
   $('hrMute').textContent=SFX.muted?'🔇':'🔊';
