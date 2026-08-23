@@ -971,6 +971,8 @@ function parseLine(line){
   if(f[0]==='PONG'){ const t=parseFloat(f[1]); if(S.pingCb&&!isNaN(t)){const cb=S.pingCb;S.pingCb=null;cb(t);} return; }
   if(f[0]==='I'){ if(f[3]) $('devName').textContent=f[3]; return; }
   if(f[0]==='OK'){ if(f[1]==='Z') S.dropStale=false; return; }
+  if(f[0]==='SW'){ HR.waveStart(+f[1],+f[2],+f[3]); return; }
+  if(f[0]==='SD'){ HR.waveData(+f[1],f.slice(2)); return; }
   if(f[0]==='G'){ if(S.dropStale)return; onGateEvent(parseInt(f[1]),parseInt(f[2]),parseFloat(f[3]),parseInt(f[4])); return; }
   if(f[0]==='W'){ onFlowWarn(parseInt(f[1]),f[2]); return; }
   if(f[0]!=='D') return;
@@ -1408,6 +1410,8 @@ const HR={
   cur:null,releaseWeb:0,arriveDev:0,judged:false,raf:0,
   hitAt:0,hitAng:0,hitDist:0,hitTag:'',hitCls:'',windAt:0,
   calMs:0,               // 타이밍 보정(ms) — 양수면 판정이 '늦음' 쪽으로 이동
+  wave:null,             // 이번 스윙 파형 {t0,step,n,v:[]}
+  waveBuf:null,          // 수신 중인 파형
   plots:[],              // 이번 경기의 모든 타구 (탑뷰 누적)
   curPlot:null,          // 이번 투구의 타구 (헛스윙이면 null)
   TOTAL_PITCH:10,
@@ -1444,6 +1448,7 @@ const HR={
     else pool=PITCHES;
     this.cur=pool[Math.floor(Math.random()*pool.length)];
     this.judged=false; this.phase='wind'; this.windAt=performance.now();
+    this.wave=null; this.waveBuf=null;
     msg('hrMsg',`${this.pitchNo}구`,'공을 끝까지 보고 휘두르세요');
     const windup=800+Math.random()*800;
     setTimeout(()=>{
@@ -1457,6 +1462,21 @@ const HR={
     },windup);
     this.render();
   },
+  /* 펌웨어가 보낸 스윙 파형 수신 */
+  waveStart(t0,step,n){
+    if(!this.active)return;
+    this.waveBuf={t0,step,n,v:new Array(n).fill(null)};
+  },
+  waveData(idx,vals){
+    const w=this.waveBuf; if(!w)return;
+    for(let k=0;k<vals.length;k++){
+      const v=parseFloat(vals[k]);
+      if(idx+k<w.n&&!isNaN(v)) w.v[idx+k]=v;
+    }
+    // 모두 채워지면 확정 (판정보다 늦게 도착할 수 있으므로 별도 보관)
+    if(w.v.every(x=>x!==null)){ this.wave=w; this.waveBuf=null; }
+  },
+
   feed(f,ms){
     if(this.phase!=='fly'||this.judged)return;
     const st=f[IDX_SWINGT],sp=f[IDX_SWINGPEAK];
@@ -1566,6 +1586,7 @@ const HR={
       // 공을 맞혔을 때만 탑뷰로 즉시 전환 (헛스윙은 타석 시점 유지)
       if((this.phase==='hit'||this.phase==='result')&&this.hitTag!=='헛스윙'){
         this.drawTop(ctx,W,H);
+        this.drawWaveInset(ctx,W,H);
         this.raf=requestAnimationFrame(draw);
         return;
       }
@@ -1614,6 +1635,7 @@ const HR={
       ctx.setLineDash([]);
 
       if(this.phase==='fly') this.drawIncoming(ctx,W,H,HZ,my,PY);
+      this.drawWaveInset(ctx,W,H);   // 헛스윙일 때는 타석 시점 위에 표시
 
       this.raf=requestAnimationFrame(draw);
     };
@@ -1656,6 +1678,79 @@ const HR={
     ctx.beginPath();ctx.arc(x-r*0.32,y,r*0.78,-0.95,0.95);ctx.stroke();
     if(p>=1&&!this.judged){ this.judged=true; this.judge(9999,2200); }
   },
+  /* ── 스윙 파형 인셋 — 가속도 곡선 위에 공 도착 시각을 겹쳐 표시 ── */
+  drawWaveInset(ctx,W,H){
+    const w=this.wave;
+    if(!w||this.hitTag===''||this.phase==='wind'||this.phase==='fly')return;
+    const bw=Math.round(W/3), bh=Math.round(H/2);
+    const bx=W-bw-10, by=H-bh-10;
+
+    // 판 배경
+    ctx.save();
+    ctx.fillStyle='rgba(255,255,255,.94)';
+    ctx.strokeStyle='#D3DBD6'; ctx.lineWidth=1.5;
+    roundRect(ctx,bx,by,bw,bh,10); ctx.fill(); ctx.stroke();
+
+    const pad=8, gx=bx+pad+22, gy=by+pad+16;
+    const gw=bw-pad*2-26, gh=bh-pad*2-26;
+
+    // 시간축: 공 도착 시각을 중심으로 ±360ms
+    const arrive=this.arriveDev-this.calMs;   // 화면에는 보정 전 기준선을 그린다
+    const span=360;
+    const t2x=t=>gx+((t-(arrive-span))/(span*2))*gw;
+    // 세로축: 가속도 0 ~ 최댓값
+    const vmax=Math.max(3000,...w.v)*1.1;
+    const v2y=v=>gy+gh-(v/vmax)*gh;
+
+    // 판정 구간 띠
+    const band=(ms,col)=>{
+      const x1=t2x(arrive-ms),x2=t2x(arrive+ms);
+      ctx.fillStyle=col; ctx.fillRect(x1,gy,x2-x1,gh);
+    };
+    band(150,'rgba(14,124,107,.09)');
+    band(60,'rgba(14,124,107,.18)');
+
+    // 축
+    ctx.strokeStyle='#DFE4DA'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(gx,gy+gh); ctx.lineTo(gx+gw,gy+gh); ctx.stroke();
+
+    // 공 도착 시각 (적정 타이밍)
+    const ax=t2x(arrive);
+    ctx.strokeStyle='#C4306B'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(ax,gy); ctx.lineTo(ax,gy+gh); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 가속도 곡선
+    ctx.strokeStyle='#0E7C6B'; ctx.lineWidth=2;
+    ctx.beginPath();
+    let pkX=0,pkY=0,pkV=-1;
+    for(let i=0;i<w.n;i++){
+      const t=w.t0+i*w.step, x=t2x(t), y=v2y(w.v[i]);
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+      if(w.v[i]>pkV){pkV=w.v[i];pkX=x;pkY=y;}
+    }
+    ctx.stroke();
+
+    // 임팩트(최대 가속도) 지점
+    ctx.fillStyle='#0E7C6B';
+    ctx.beginPath(); ctx.arc(pkX,pkY,4,0,7); ctx.fill();
+    ctx.strokeStyle='#0E7C6B'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(pkX,pkY); ctx.lineTo(pkX,gy+gh); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 라벨
+    ctx.font='700 10px sans-serif';
+    ctx.fillStyle='#C4306B'; ctx.textAlign='center';
+    ctx.fillText('공 도착',ax,gy-4);
+    ctx.fillStyle='#0E7C6B';
+    ctx.fillText('임팩트',Math.min(gx+gw-18,Math.max(gx+18,pkX)),gy+gh+12);
+    ctx.textAlign='left';
+    ctx.fillStyle='#6B7B80'; ctx.font='700 9px sans-serif';
+    ctx.save(); ctx.translate(bx+pad+6,gy+gh/2); ctx.rotate(-Math.PI/2);
+    ctx.textAlign='center'; ctx.fillText('가속도',0,0); ctx.restore();
+    ctx.restore();
+  },
+
   /* ── 탑뷰: 임팩트 이후 비거리·방향을 정확한 축척으로 표시 ── */
   drawTop(ctx,W,H){
     const hx=W/2, hy=H*0.955;                       // 홈플레이트 위치
@@ -1887,6 +1982,13 @@ const JP={
 function msg(id,big,sub){
   const el=$(id);
   el.innerHTML=big?`<div class="big">${big}</div><div class="sub">${sub||''}</div>`:'';
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
 }
 function fitCanvas(cv){
   const r=cv.getBoundingClientRect();
@@ -2434,7 +2536,22 @@ const SIM={
   /* 게임 입력 */
   swing(){
     if(!this.on) return;
-    this.pendSwing={ t:this.now()-this.t0, peak:+$('simPower').value };
+    const peak=+$('simPower').value;
+    // 실제 스윙과 비슷한 반주기 사인 파형(약 260ms)을 만들어 함께 보낸다.
+    // 임팩트(최대 가속도) 시각이 탭한 순간이 되도록 시작 시각을 앞당긴다.
+    const step=5,dur=260,n=Math.round(dur/step);
+    const peakIdx=Math.round(n/2);
+    const tapT=this.now()-this.t0;
+    const startT=tapT-peakIdx*step;
+    const v=[];
+    for(let i=0;i<n;i++){
+      const a=200+(peak-200)*Math.sin(Math.PI*i/n);
+      v.push(Math.max(0,Math.round(a+(Math.random()-0.5)*120)));
+    }
+    this.pendSwing={ t:tapT, peak };
+    // 펌웨어와 같은 형식으로 전송
+    this.emit(`SW,${startT},${step},${n}`);
+    for(let i=0;i<n;i+=10) this.emit(`SD,${i},${v.slice(i,i+10).join(',')}`);
   },
   jump(ms){
     if(!this.on) return;
