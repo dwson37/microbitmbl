@@ -351,9 +351,10 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
         <div id="xyRow" style="display:none">
           <div class="rowline"><label style="width:34px">X축</label><select id="xCh" style="flex:1"></select></div>
           <div class="rowline"><label style="width:34px">Y축</label><select id="yCh" style="flex:1"></select></div>
-          <div class="rowline"><label style="width:34px">경향<span class="tip" data-tip="흩어진 점의 추세선을 그립니다. 그룹 평균은 같은 가로축 값끼리 평균과 표준편차를 보여주고, 선형 회귀는 최소제곱 직선과 식·R²를 표시합니다.">i</span></label>
+          <div class="rowline"><label style="width:34px">경향<span class="tip" data-tip="측정 순서로 잇기는 점을 잰 순서대로 연결해 적정 곡선처럼 흐름을 보여줍니다. 그룹 평균은 같은 가로축 값끼리 평균과 표준편차를, 선형 회귀는 최소제곱 직선과 식·R²를 표시합니다.">i</span></label>
             <select id="trend" style="flex:1">
               <option value="none">없음 (개별 점만)</option>
+              <option value="line">측정 순서로 잇기</option>
               <option value="mean">그룹 평균 ± 편차</option>
               <option value="linreg">선형 회귀</option>
             </select></div>
@@ -561,6 +562,7 @@ body.simmode .gstage{cursor:pointer;box-shadow:inset 0 0 0 2.5px var(--amber)}
             </table>
             <p class="warn">전원은 <b>3V</b>를 쓰세요. 5V로 구동하면 출력이 5V가 되어 마이크로비트 핀이 손상됩니다.</p>
             <p class="note">방울 보정: <b>보정 시작</b>을 누르고 메스실린더 눈금까지 받은 뒤 <b>보정 완료</b>를 누르면 방울 수가 자동으로 입력됩니다.</p>
+            <p class="note">방울 계수를 쓰면 <b>방울 하나당 한 점</b>만 기록됩니다. 방울이 떨어진 직후에는 아직 섞이지 않았으므로, 다음 방울 직전의 값을 그 방울의 대푯값으로 삼습니다. 아직 확정되지 않은 현재 구간은 <b>속이 빈 원</b>으로 표시되다가 다음 방울이 떨어지면 확정됩니다. CSV에도 확정된 값만 저장됩니다.</p>
           </details>
 
           <details><summary>아날로그 센서 일반</summary>
@@ -720,6 +722,7 @@ const S={
   gate:{last:{},vlog:[]},        // last[pin]={us,ms} 광문 최근 이벤트, vlog=속력 기록
   dropStale:false,               // Z(리셋) 직후, 전송 중이던 구식 행을 버리는 중
   tErr:{},tLast:{},              // DS18B20 오류 보정: 연속 오류 횟수 / 마지막 정상값
+  drop:{seg:null,last:null},     // 방울 구간: 현재 방울 수 / 그 구간의 최신 행
   flow:{},                       // 핀별 연속 차단 경고 상태
   pingSent:0,pingCb:null,
 };
@@ -1034,10 +1037,50 @@ function parseLine(line){
   // 활성 채널 값이 하나도 없는 행(광문만 켜진 경우 등)은 기록하지 않는다
   // — 광문 데이터는 통과 이벤트(onGateEvent)에서만 행이 생긴다
   const hasVal=activeChannels().some(ch=>row[ch.id]!=null);
-  if(hasVal) addRow(row);
+  if(!hasVal) return;
+
+  const dp=dropPin();
+  if(dp<0){ addRow(row); return; }
+
+  /* ── 방울 계수 구간 집계 ──
+     방울 하나당 한 행만 남긴다. 대푯값은 "다음 방울 직전의 값"이어야
+     그 방울이 다 섞인 뒤의 상태와 부피가 올바르게 짝지어진다.
+     그때까지는 잠정 행으로 화면에만 표시한다. */
+  const cnt=row['p'+(dp+1)];
+  if(cnt==null||isNaN(cnt)){ addRow(row); return; }
+
+  if(S.drop.seg===null){ S.drop.seg=cnt; S.drop.last=row; showProvisional(row); return; }
+
+  if(cnt!==S.drop.seg){
+    // 새 방울 → 직전 구간의 마지막 행을 확정 저장
+    if(S.drop.last) addRow(S.drop.last);
+    S.drop.seg=cnt;
+  }
+  S.drop.last=row;
+  showProvisional(row);
+}
+
+/* 아직 확정되지 않은 현재 방울 구간을 그래프에만 잠정 표시 (속 빈 원) */
+function showProvisional(row){
+  if(!chart||S.gMode!=='xy')return;
+  const ds=chart.data.datasets.find(d=>d._prov);
+  const x=cv(row,S.xCh), y=cv(row,S.yCh);
+  if(!ok(x)||!ok(y)){ if(ds) ds.data=[]; chart.update('none'); return; }
+  if(ds){ ds.data=[{x,y}]; }
+  else{
+    chart.data.datasets.push({_prov:true,label:'측정 중 (다음 방울에 확정)',
+      data:[{x,y}],borderColor:'#0E7C6B',backgroundColor:'rgba(0,0,0,0)',
+      pointRadius:6,pointBorderWidth:2,showLine:false,parsing:false});
+  }
+  chart.update('none');
 }
 
 // ─────────── 채널 목록 ───────────
+/* 방울 계수 모드 핀 인덱스 (없으면 -1) — 대푯값 집계의 기준 채널 */
+function dropPin(){
+  for(let i=0;i<4;i++) if(S.pins[i].mode==='P'&&S.pins[i].profile==='drop') return i;
+  return -1;
+}
 function gatePins(){          // 광문 핀을 위치 오름차순으로
   const g=[];
   for(let i=0;i<4;i++) if(S.pins[i].mode==='P'&&S.pins[i].profile==='gate')
@@ -1125,6 +1168,7 @@ const markerPlugin={id:'mk',afterDraw(c){
 }};
 function rebuildChart(){
   if(chart){chart.destroy();chart=null;}
+  // 잠정 점은 확정 데이터가 아니므로 재생성 시 사라진다 (다음 수신에서 다시 표시됨)
   const chs=activeChannels(),ctx=$('chart').getContext('2d');
   Chart.defaults.color='#6B7B80'; Chart.defaults.borderColor='#DFE4DA';
   Chart.defaults.font.family="'Noto Sans KR',sans-serif";
@@ -1180,7 +1224,7 @@ function xyDatasets(chs){
       label:trendOn?'개별 측정':'구간 속력 — 점 색은 구간, 선은 낙하 1회',data,
       borderColor:'#8CA0BC',borderWidth:2,tension:0.15,
       pointBackgroundColor:ptCol,pointBorderColor:ptCol,pointRadius:trendOn?3.5:4.5,
-      showLine:!trendOn,spanGaps:false,parsing:false});
+      showLine:!trendOn||S.trend==='line',spanGaps:false,parsing:false});
   }
 
   if(trendOn&&rows.length>=2) base.push(...trendDatasets(rows));
@@ -1189,6 +1233,7 @@ function xyDatasets(chs){
 
 /* 경향선 데이터셋 생성 */
 function trendDatasets(rows){
+  if(S.trend==='line') return [];      // 선 잇기는 기본 데이터셋에서 처리
   const pts=rows.map(r=>({x:cv(r,S.xCh),y:cv(r,S.yCh)})).filter(p=>ok(p.x)&&ok(p.y));
   if(S.trend==='mean'){
     // 같은 X끼리 그룹화 (부동소수 대비 1e-6 반올림)
@@ -2177,11 +2222,14 @@ $('btnStart').onclick=async()=>{
     if(!activeChannels().length){alert('활성화된 채널이 없습니다. 왼쪽 패널에서 센서를 설정하세요.');return;}
     S.data=[];S.markers=[];S.aPts=[];$('analyzeOut').style.display='none';
     S.frozen=false;S.gate.last={};S.gate.vlog=[];S.tErr={};S.tLast={};
+    S.drop={seg:null,last:null};
     $('gatePanel').style.display='none';
     rebuildChart();rebuildTable();
     S.running=true;await sendReset();await sleep(80);await send('G,1');
     setRunUI(true);await acquireWake();
   }else{
+    // 마지막 방울 구간을 그 시점 값으로 확정
+    if(dropPin()>=0&&S.drop.last){ addRow(S.drop.last); S.drop.last=null; }
     S.running=false;S.frozen=true;          // 기록분 보존
     await send('G,0');setRunUI(false);releaseWake();
   }
@@ -2194,7 +2242,8 @@ $('btnMark').onclick=()=>{
 $('btnReset').onclick=async()=>{
   if(S.data.length&&!confirm('측정 데이터를 모두 지울까요?'))return;
   S.data=[];S.markers=[];S.aPts=[];S.frozen=false;$('analyzeOut').style.display='none';
-  S.gate.last={};S.gate.vlog=[];S.tErr={};S.tLast={};$('gatePanel').style.display='none';
+  S.gate.last={};S.gate.vlog=[];S.tErr={};S.tLast={};S.drop={seg:null,last:null};
+  $('gatePanel').style.display='none';
   await sendReset();rebuildChart();rebuildTable();rebuildVals();
 };
 $('btnCsv').onclick=saveCsv;
